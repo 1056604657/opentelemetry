@@ -1,0 +1,94 @@
+- apiVersion: opentelemetry.io/v1alpha1
+  kind: Instrumentation
+  metadata:
+    name: standard
+    namespace: RELEASE_NAMESPACE
+  spec:
+    exporter:
+      endpoint: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4318
+    propagators:
+    - tracecontext
+    - baggage
+    sampler:
+      type: always_on
+    defaults:
+      useLabelsForResourceAttributes: true
+    env:
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+      value: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4318/v1/metrics
+    - name: OTEL_METRICS_EXPORTER
+      value: otlp
+    - name: OTEL_LOGS_EXPORTER
+      value: none
+    - name: OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
+      value: cumulative
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: k8s.cluster.name=prod-cluster-01,deployment.environment.name=production
+    - name: OTEL_METRIC_EXPORT_INTERVAL
+      value: '60000'
+    - name: OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT
+      value: '4096'
+    - name: OTEL_BSP_MAX_QUEUE_SIZE
+      value: '2048'
+    - name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE
+      value: '128'
+    java:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:2.32.0-1
+    python:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.66b1-2
+      env:
+      - name: OTEL_PYTHON_SYSTEM_METRICS_EXCLUDED_METRICS
+        value: system.*,process.runtime.*
+      - name: OTEL_PYTHON_LOG_CORRELATION
+        value: 'true'
+    nodejs:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.78.0-6
+- apiVersion: opentelemetry.io/v1alpha1
+  kind: Instrumentation
+  metadata:
+    name: standard-prometheus
+    namespace: RELEASE_NAMESPACE
+  spec:
+    exporter:
+      endpoint: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4318
+    propagators:
+    - tracecontext
+    - baggage
+    sampler:
+      type: always_on
+    defaults:
+      useLabelsForResourceAttributes: true
+    env:
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+      value: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4318/v1/metrics
+    - name: OTEL_METRICS_EXPORTER
+      value: none
+    - name: OTEL_LOGS_EXPORTER
+      value: none
+    - name: OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
+      value: cumulative
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: k8s.cluster.name=prod-cluster-01,deployment.environment.name=production
+    - name: OTEL_METRIC_EXPORT_INTERVAL
+      value: '60000'
+    - name: OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT
+      value: '4096'
+    - name: OTEL_BSP_MAX_QUEUE_SIZE
+      value: '2048'
+    - name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE
+      value: '128'
+    java:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:2.32.0-1
+    python:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.66b1-2
+      env:
+      - name: OTEL_PYTHON_SYSTEM_METRICS_EXCLUDED_METRICS
+        value: system.*,process.runtime.*
+      - name: OTEL_PYTHON_LOG_CORRELATION
+        value: 'true'
+    nodejs:
+      image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.78.0-6

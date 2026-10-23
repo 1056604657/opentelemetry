@@ -1,0 +1,306 @@
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-gateway
+    namespace: RELEASE_NAMESPACE
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-logs
+    namespace: RELEASE_NAMESPACE
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-node
+    namespace: RELEASE_NAMESPACE
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-cluster
+    namespace: RELEASE_NAMESPACE
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-scraper
+    namespace: RELEASE_NAMESPACE
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-targetallocator
+    namespace: RELEASE_NAMESPACE
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: RELEASE_NAMESPACE-otel-metadata
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    - namespaces
+    - nodes
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - apps
+    resources:
+    - replicasets
+    verbs:
+    - get
+    - list
+    - watch
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: RELEASE_NAMESPACE-otel-metadata
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: RELEASE_NAMESPACE-otel-metadata
+  subjects:
+  - kind: ServiceAccount
+    name: otel-gateway
+    namespace: RELEASE_NAMESPACE
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: RELEASE_NAMESPACE-otel-node
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    - namespaces
+    - nodes
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - ''
+    resources:
+    - nodes/stats
+    verbs:
+    - get
+  - apiGroups:
+    - apps
+    resources:
+    - replicasets
+    verbs:
+    - get
+    - list
+    - watch
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: RELEASE_NAMESPACE-otel-node
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: RELEASE_NAMESPACE-otel-node
+  subjects:
+  - kind: ServiceAccount
+    name: otel-node
+    namespace: RELEASE_NAMESPACE
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: RELEASE_NAMESPACE-otel-cluster
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    - nodes
+    - nodes/spec
+    - namespaces
+    - services
+    - resourcequotas
+    - replicationcontrollers
+    - limitranges
+    - persistentvolumes
+    - persistentvolumeclaims
+    - events
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - apps
+    resources:
+    - deployments
+    - replicasets
+    - daemonsets
+    - statefulsets
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - batch
+    resources:
+    - jobs
+    - cronjobs
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - autoscaling
+    resources:
+    - horizontalpodautoscalers
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - events.k8s.io
+    resources:
+    - events
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - get
+    - list
+    - watch
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: RELEASE_NAMESPACE-otel-cluster
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: RELEASE_NAMESPACE-otel-cluster
+  subjects:
+  - kind: ServiceAccount
+    name: otel-cluster
+    namespace: RELEASE_NAMESPACE
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: RELEASE_NAMESPACE-otel-targets
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    - nodes
+    - services
+    - endpoints
+    - namespaces
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - ''
+    resources:
+    - configmaps
+    verbs:
+    - get
+  - apiGroups:
+    - ''
+    resources:
+    - nodes/metrics
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - networking.k8s.io
+    resources:
+    - ingresses
+    verbs:
+    - get
+    - list
+    - watch
+  - nonResourceURLs:
+    - /metrics
+    - /api
+    - /api/*
+    - /apis
+    - /apis/*
+    verbs:
+    - get
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - monitoring.coreos.com
+    resources:
+    - servicemonitors
+    - podmonitors
+    - probes
+    - scrapeconfigs
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - apps
+    resources:
+    - statefulsets
+    verbs:
+    - get
+    - list
+    - watch
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: RELEASE_NAMESPACE-otel-targets
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: RELEASE_NAMESPACE-otel-targets
+  subjects:
+  - kind: ServiceAccount
+    name: otel-targetallocator
+    namespace: RELEASE_NAMESPACE
+  - kind: ServiceAccount
+    name: otel-scraper
+    namespace: RELEASE_NAMESPACE
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: otel-targetallocator-secrets
+    namespace: RELEASE_NAMESPACE
+  rules:
+  - apiGroups:
+    - ''
+    resources:
+    - secrets
+    verbs:
+    - get
+    - list
+    - watch
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    name: otel-targetallocator-secrets
+    namespace: RELEASE_NAMESPACE
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: otel-targetallocator-secrets
+  subjects:
+  - kind: ServiceAccount
+    name: otel-targetallocator
+    namespace: RELEASE_NAMESPACE
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: otel-sampler
+    namespace: RELEASE_NAMESPACE

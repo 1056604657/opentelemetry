@@ -1,0 +1,84 @@
+{{- if .Values.persistent_queue -}}
+  {{- $storage := required "storage_class required for persistent queues" .Values.storage_class -}}
+  {{- if contains "REPLACE_ME" $storage -}}{{- fail "storage_class still contains example/unpinned value" -}}{{- end -}}
+{{- end -}}
+{{- range $key := list "cluster_name" "environment" "collector_image" "trace_endpoint" "metrics_endpoint" "log_endpoint" "java_image" "python_image" "nodejs_image" "target_allocator_image" -}}
+  {{- $value := required (printf "%s required" $key) (index $.Values $key) -}}
+  {{- if or (contains ".invalid" $value) (contains "REPLACE_ME" $value) (contains ":latest" $value) -}}
+    {{- fail (printf "%s still contains example/unpinned value" $key) -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq .Values.logs_transport "kafka" -}}
+{{- if empty .Values.kafka_brokers -}}{{- fail "kafka_brokers must not be empty" -}}{{- end -}}
+{{- range $value := .Values.kafka_brokers -}}
+  {{- if or (empty $value) (contains ".invalid" $value) (contains "REPLACE_ME" $value) -}}{{- fail "Replace kafka_brokers with cloud Kafka addresses" -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.credentials.create -}}
+ {{- if eq .Values.logs_transport "kafka" -}}
+  {{- if contains "${env:KAFKA_USERNAME}" (toJson .Values.kafka_auth) -}}
+    {{- if or (empty .Values.credentials.kafka.KAFKA_USERNAME) (eq .Values.credentials.kafka.KAFKA_USERNAME "REPLACE_ME") -}}{{- fail "credentials.kafka.KAFKA_USERNAME required" -}}{{- end -}}
+  {{- end -}}
+  {{- if contains "${env:KAFKA_PASSWORD}" (toJson .Values.kafka_auth) -}}
+    {{- if or (empty .Values.credentials.kafka.KAFKA_PASSWORD) (eq .Values.credentials.kafka.KAFKA_PASSWORD "REPLACE_ME") -}}{{- fail "credentials.kafka.KAFKA_PASSWORD required" -}}{{- end -}}
+  {{- end -}}
+ {{- end -}}
+  {{- $kafkaCA := "" -}}
+  {{- if and (eq .Values.logs_transport "kafka") .Values.kafka_tls -}}{{- $kafkaCA = .Values.kafka_tls.ca_file | default "" -}}{{- end -}}
+  {{- range $ca := list .Values.backend_ca_file .Values.kubelet_ca_file $kafkaCA -}}
+    {{- if hasPrefix "/etc/otel/trust/" $ca -}}
+      {{- $key := trimPrefix "/etc/otel/trust/" $ca -}}
+      {{- $pem := index $.Values.credentials.trust $key | default "" -}}
+      {{- if not (contains "-----BEGIN CERTIFICATE-----" $pem) -}}{{- fail (printf "credentials.trust.%s must contain a PEM CA certificate" $key) -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- range $signal := list "trace" "log" "metrics" -}}
+  {{- $key := printf "%s_endpoint" $signal -}}
+  {{- $url := index $.Values $key -}}
+  {{- $protocol := index $.Values (printf "%s_protocol" $signal) -}}
+  {{- if eq $protocol "otlp_grpc" -}}
+    {{- if or (not (regexMatch "^[^/@]+:[0-9]+$" $url)) (contains "://" $url) -}}{{- fail (printf "%s for otlp_grpc requires host:port without a URL scheme" $key) -}}{{- end -}}
+  {{- else -}}
+    {{- if or (not (hasPrefix "https://" $url)) (contains "@" $url) -}}{{- fail (printf "%s requires HTTPS without embedded credentials" $key) -}}{{- end -}}
+    {{- if and (eq $protocol "otlp_http") (regexMatch "/v1/(traces|logs|metrics)/?([?].*)?$" $url) -}}{{- fail (printf "%s needs OTLP base URL without signal path" $key) -}}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (eq .Values.logs_transport "direct") .Values.kafka_metrics.enabled -}}{{- fail "kafka_metrics requires logs_transport=kafka" -}}{{- end -}}
+{{- if and (not .Values.monitor_resources_enabled) .Values.businessPodMonitors -}}{{- fail "businessPodMonitors requires monitor_resources_enabled=true" -}}{{- end -}}
+{{- if .Values.aws_sigv4.enabled -}}
+ {{- if ne .Values.metrics_protocol "prometheus_remote_write" -}}{{- fail "aws_sigv4 requires metrics_protocol=prometheus_remote_write" -}}{{- end -}}
+ {{- if empty .Values.aws_sigv4.region -}}{{- fail "aws_sigv4.region required" -}}{{- end -}}
+{{- end -}}
+
+{{- $topic := default (printf "otel.%s.logs.v1" .Values.cluster_name) .Values.kafka_topic -}}
+{{- if or (not (regexMatch "^[a-zA-Z0-9._-]+$" $topic)) (gt (len $topic) 249) (contains "REPLACE_ME" $topic) -}}{{- fail "kafka_topic must be a valid Kafka topic name" -}}{{- end -}}
+{{- if and (not (empty .Values.kafka_group)) (or (regexMatch "[[:space:]]" .Values.kafka_group) (contains "REPLACE_ME" .Values.kafka_group)) -}}{{- fail "kafka_group must not contain whitespace" -}}{{- end -}}
+{{- $mtls := .Values.target_allocator_mtls -}}
+{{- if $mtls.enabled -}}
+  {{- if not $mtls.useCertManager -}}
+    {{- if not $mtls.tls -}}{{- fail "target_allocator_mtls.tls required when useCertManager=false" -}}{{- end -}}
+    {{- $ca := $mtls.tls.certificateAuthorityCertificate | default dict -}}
+    {{- if not (or $ca.secret $ca.configMap) -}}{{- fail "TA mTLS requires a CA Secret or ConfigMap" -}}{{- end -}}
+    {{- range $kind := list "serverCertificate" "clientCertificate" -}}
+      {{- $pair := index $mtls.tls $kind | default dict -}}
+      {{- if or (not $pair.certificateSecret) (not $pair.keySecret) -}}{{- fail (printf "TA mTLS %s requires certificateSecret and keySecret" $kind) -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- else -}}
+  {{- if .Values.target_allocator_secret_namespaces -}}{{- fail "Authenticated Monitor secrets require target_allocator_mtls; RBAC alone is insufficient" -}}{{- end -}}
+  {{- range $monitor := .Values.businessPodMonitors -}}
+    {{- range $endpoint := $monitor.spec.podMetricsEndpoints -}}
+      {{- if or $endpoint.basicAuth $endpoint.authorization $endpoint.oauth2 $endpoint.bearerTokenSecret -}}{{- fail "Authenticated businessPodMonitors require target_allocator_mtls" -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if gt (mul (int .Values.exporter_batch_max_kib) 1024) (mul (int .Values.otlp_max_recv_mib) 1048576) -}}{{- fail "exporter_batch_max_kib must fit within otlp_max_recv_mib" -}}{{- end -}}
+{{- if gt (mul (int .Values.exporter_batch_max_kib) 1024) (mul (int .Values.exporter_queue_mib) 1048576) -}}{{- fail "exporter_batch_max_kib must fit within exporter_queue_mib" -}}{{- end -}}
+
+{{- range $key := list "server_name" "server_name_override" -}}
+  {{- if hasKey $.Values.metrics_processing.kubeletstats $key -}}
+    {{- fail (printf "kubeletstats does not support %s; use a DNS kubelet_endpoint and scheduling.node.hostAliases if required" $key) -}}
+  {{- end -}}
+{{- end -}}

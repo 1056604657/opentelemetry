@@ -1,0 +1,85 @@
+# 每个集群复制一份 values-<cluster>.local.yaml；真实凭据不要提交。
+# 必填且跨集群唯一，例如 prod-shanghai-01；安装后保持稳定。
+cluster_name: REPLACE_ME
+environment: production
+storage_class: REPLACE_ME
+# 生产默认使用持久发送队列；false 会在进程重启时丢失未发送数据。
+persistent_queue: true
+
+# OTLP HTTP 填 HTTPS base URL，不带 /v1/traces、/v1/logs、/v1/metrics。
+# 如改为 otlp_grpc，endpoint 填 host:port，不带 scheme。
+trace_protocol: otlp_http
+trace_endpoint: https://traces.invalid:4318
+log_protocol: otlp_http
+log_endpoint: https://logs.invalid:4318
+# 也支持 prometheus_remote_write；此时填写完整 HTTPS write URL。
+metrics_protocol: otlp_http
+metrics_endpoint: https://metrics.invalid/api/v1/otlp
+
+# 仅 logs_transport=kafka 时填写；direct 不依赖 Kafka。
+# 云 Kafka，预建 topic；日志编码为 OTLP protobuf，消费组保持稳定。
+kafka_brokers:
+  - kafka-0.invalid:9093
+  - kafka-1.invalid:9093
+  - kafka-2.invalid:9093
+# 空值自动生成 otel.<cluster_name>.logs.v1 / otel.<cluster_name>.log-gateway.v1。
+# 云平台有命名要求时可覆盖；每个集群使用独立 topic、消费组。
+kafka_topic: ''
+kafka_group: ''
+kafka_auth:
+  sasl:
+    mechanism: SCRAM-SHA-512
+    username: ${env:KAFKA_USERNAME}
+    password: ${env:KAFKA_PASSWORD}
+kafka_tls:
+  min_version: '1.2'
+  # 私有 CA 时添加 ca_file: /etc/otel/trust/kafka-ca.crt
+
+# 公有 CA 保持空；私有 CA 改成 /etc/otel/trust/backend-ca.crt。
+backend_ca_file: ''
+# 按目标集群 kubelet 的证书 CA/SAN 填写，保持证书校验。
+kubelet_ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+kubelet_endpoint: https://${env:OTEL_NODE_IP}:10250
+
+credentials:
+  create: true
+  backends:
+    TRACES_AUTHORIZATION: ''   # 例如 'Bearer <token>'；后端无鉴权可留空
+    LOGS_AUTHORIZATION: ''
+    METRICS_AUTHORIZATION: ''
+  kafka:
+    KAFKA_USERNAME: REPLACE_ME
+    KAFKA_PASSWORD: REPLACE_ME
+  trust:
+    backend-ca.crt: ''         # 私有 CA 时填写 PEM，可使用 YAML 的 | 多行格式
+    kafka-ca.crt: ''
+    kubelet-ca.crt: ''
+
+# 以下可先保留默认。unified=共享三信号；dual=trace+metrics / logs 两组。
+gateway_topology: unified
+gateway_replicas: 2
+scraper_replicas: 2
+pvc_size: 10Gi
+# SDK 全量上报；采样策略在 tail_sampling，由独立采样器执行。
+sampler_replicas: 2
+logs_transport: direct
+# Pod 内存上限 MiB；自动联动 memory_limiter、GOMEMLIMIT 和 request。
+collector_memory_mib:
+  sampler: 4096              # 尾采样待决数据在内存；须按全量 trace 速率验收
+  gateway: 2048
+  logs: 2048                 # 仅 dual 生效
+  node: 1024
+  cluster: 1024
+  scraper: 2048
+
+# 三信号处理配置在 values-telemetry.yaml；按需覆盖 log_processing / trace_processing / metrics_processing；通常只改地址、认证和集群身份。
+# 其余参数保持 chart 默认即可；可按需追加，详见部署文档：
+# exporter_queue_mib: 256    # OTLP/Kafka 的持久发送队列，每 exporter
+# exporter_batch_max_kib: 512  # 持久队列发送分批上限，200ms 刷新
+# otlp_max_recv_mib: 4       # Gateway 单次 OTLP 请求上限
+# filelog_start_at: beginning  # 默认保留新容器启动日志；已有 checkpoint 优先
+# filelog_max_log_size: 256KiB
+# kafka_metrics: {enabled: true}  # 云 Kafka 允许 Describe/offset 查询时启用积压指标
+# rollout_revision: '1'     # 使用外部 Secret 时，轮换凭据后改此值触发滚动
+
+# 如限制采集namespace，log_namespaces和otlp_namespace_selector都应包含接入服务所在namespace。

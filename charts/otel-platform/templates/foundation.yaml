@@ -1,0 +1,7 @@
+{{- range $object := (.Files.Get (printf "files/foundation-%s.yaml" .Values.gateway_topology) | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray) }}
+{{- if eq $object.kind "ServiceAccount" -}}{{- $_ := set $object "imagePullSecrets" $.Values.image_pull_secrets -}}{{- $annotations := index $.Values.service_account_annotations $object.metadata.name | default dict -}}
+{{- if $annotations -}}{{- $_ := set $object.metadata "annotations" $annotations -}}{{- end -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{ end -}}

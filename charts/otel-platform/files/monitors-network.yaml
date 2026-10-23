@@ -1,0 +1,63 @@
+- apiVersion: monitoring.coreos.com/v1
+  kind: PodMonitor
+  metadata:
+    name: otel-self
+    namespace: RELEASE_NAMESPACE
+    labels:
+      observability.example.com/owner: otel
+  spec:
+    selector:
+      matchLabels:
+        app.kubernetes.io/managed-by: opentelemetry-operator
+        app.kubernetes.io/component: opentelemetry-collector
+    podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+    jobLabel: app.kubernetes.io/name
+- apiVersion: monitoring.coreos.com/v1
+  kind: PodMonitor
+  metadata:
+    name: otel-ta-self
+    namespace: RELEASE_NAMESPACE
+    labels:
+      observability.example.com/owner: otel
+  spec:
+    selector:
+      matchLabels:
+        app.kubernetes.io/component: opentelemetry-targetallocator
+    jobLabel: app.kubernetes.io/name
+    podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: otel-ingress
+    namespace: RELEASE_NAMESPACE
+  spec:
+    podSelector: {}
+    policyTypes:
+    - Ingress
+    ingress:
+    - from:
+      - podSelector: {}
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: otel-otlp-ingress
+    namespace: RELEASE_NAMESPACE
+  spec:
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: otel-gateway-collector
+    policyTypes:
+    - Ingress
+    ingress:
+    - from:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 4317
+      - protocol: TCP
+        port: 4318

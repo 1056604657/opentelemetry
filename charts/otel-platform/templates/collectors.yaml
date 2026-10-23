@@ -1,0 +1,303 @@
+{{- $root := . -}}
+{{- $kafkaTopic := default (printf "otel.%s.logs.v1" .Values.cluster_name) .Values.kafka_topic -}}
+{{- $kafkaGroup := default (printf "otel.%s.log-gateway.v1" .Values.cluster_name) .Values.kafka_group -}}
+{{- $operatorCA := include "otel.operatorCA" . -}}
+{{- $fileProtocol := ternary "prometheus_remote_write" "otlp_http" (eq .Values.metrics_protocol "prometheus_remote_write") -}}
+{{- $file := printf "files/collectors-%s-%s.yaml" .Values.gateway_topology $fileProtocol -}}
+{{- $objects := .Files.Get $file | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray -}}
+{{- $gateway := dict -}}
+{{- range $o := $objects -}}{{- if eq $o.metadata.name "otel-gateway" -}}{{- $gateway = deepCopy $o -}}{{- end -}}{{- end -}}
+{{- $sampler := deepCopy $gateway -}}
+{{- $_ := set $sampler.metadata "name" "otel-sampler" -}}
+{{- $_ := set $sampler.spec "serviceAccount" "otel-sampler" -}}
+{{- $_ := set $sampler.spec "serviceName" "otel-sampler-headless" -}}
+{{- $_ := set $sampler.spec "replicas" .Values.sampler_replicas -}}
+{{- $_ := set (index $sampler.spec.topologySpreadConstraints 0).labelSelector.matchLabels "app.kubernetes.io/name" "otel-sampler-collector" -}}
+{{- $cfg := $sampler.spec.config -}}
+{{- $_ := set $cfg "receivers" (dict "otlp" (deepCopy $gateway.spec.config.receivers.otlp)) -}}
+{{- $_ := set $cfg "processors" (dict "memory_limiter" (deepCopy $cfg.processors.memory_limiter) "resource/cluster" (deepCopy (index $cfg.processors "resource/cluster")) "tail_sampling" .Values.tail_sampling) -}}
+{{- $_ := set $cfg "exporters" (dict "otlp_http/traces" (deepCopy (index $gateway.spec.config.exporters "otlp_http/traces"))) -}}
+{{- $_ := set $cfg.service "pipelines" (dict "traces" (dict "receivers" (list "otlp") "processors" (list "memory_limiter" "resource/cluster" "tail_sampling") "exporters" (list "otlp_http/traces"))) -}}
+{{- $objects = append $objects $sampler -}}
+{{- range $object := $objects }}
+{{- $name := $object.metadata.name -}}
+{{- $spec := $object.spec -}}
+{{- if eq $name "otel-node" -}}
+  {{- $_ := set $spec.config.receivers.filelog "operators" (list
+      (deepCopy $root.Values.log_processing.filelog.container)
+      (deepCopy $root.Values.log_processing.filelog.source)
+      (deepCopy $root.Values.log_processing.filelog.recombine)
+      (deepCopy $root.Values.log_processing.filelog.cleanup)) -}}
+  {{- $_ := set $spec.config.processors "k8s_attributes" (deepCopy $root.Values.log_processing.kubernetes) -}}
+  {{- $_ := set $spec.config.processors "resource/node" (deepCopy $root.Values.log_processing.resource) -}}
+  {{- $_ := set $spec.config.processors "transform/log_json" (deepCopy $root.Values.log_processing.normalize) -}}
+{{- end -}}
+{{- if eq $name "otel-node" -}}
+  {{- $_ := set $spec.config.receivers "hostmetrics" (deepCopy $root.Values.metrics_processing.hostmetrics) -}}
+  {{- $_ := set $spec.config.receivers "kubeletstats" (deepCopy $root.Values.metrics_processing.kubeletstats) -}}
+  {{- if $root.Values.log_processing.application_time.enabled -}}
+    {{- $timeStatement := printf "set(time, Time(cache[\"header\"][\"time\"], %s, %s)) where IsMap(cache[\"header\"]) and IsString(cache[\"header\"][\"time\"])" (toJson $root.Values.log_processing.application_time.layout) (toJson $root.Values.log_processing.application_time.timezone) -}}
+    {{- $group := index (index $spec.config.processors "transform/log_json").log_statements 0 -}}
+    {{- $_ := set $group "statements" (append $group.statements $timeStatement) -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq $name "otel-cluster" -}}
+  {{- $_ := set $spec.config.receivers "k8s_cluster" (deepCopy $root.Values.metrics_processing.cluster) -}}
+  {{- if $root.Values.kafka_metrics.enabled -}}
+    {{- $receiver := dict "brokers" $root.Values.kafka_brokers "protocol_version" "2.1.0" "scrapers" (list "topics" "consumers") "collection_interval" $root.Values.kafka_metrics.collection_interval "topic_match" (printf "^%s$" (regexQuoteMeta $kafkaTopic)) "group_match" (printf "^%s$" (regexQuoteMeta $kafkaGroup)) -}}
+    {{- if $root.Values.kafka_tls -}}{{- $_ := set $receiver "tls" $root.Values.kafka_tls -}}{{- end -}}
+    {{- if $root.Values.kafka_auth -}}{{- $_ := set $receiver "auth" $root.Values.kafka_auth -}}{{- end -}}
+    {{- $_ := set $spec.config.receivers "kafka_metrics" $receiver -}}
+    {{- $_ := set $spec.config.service.pipelines.metrics "receivers" (append $spec.config.service.pipelines.metrics.receivers "kafka_metrics") -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq $name "otel-gateway" -}}
+  {{- $_ := set $spec.config.processors "attributes/redact" (deepCopy $root.Values.trace_processing.redact) -}}
+  {{- $_ := set $spec.config.processors "transform/trace_resource" (deepCopy $root.Values.trace_processing.normalize) -}}
+  {{- $_ := set $spec.config.processors "transform/metric_labels" (deepCopy $root.Values.metrics_processing.labels) -}}
+  {{- $tracePipe := $spec.config.service.pipelines.traces -}}
+  {{- $_ := set $tracePipe "processors" (list "memory_limiter" "k8s_attributes" "resource/cluster" "transform/trace_resource" "attributes/redact") -}}
+  {{- if $root.Values.trace_processing.drop_noise -}}
+    {{- $_ := set $spec.config.processors "filter/trace_noise" (deepCopy $root.Values.trace_processing.noise_filter) -}}
+    {{- $_ := set $tracePipe "processors" (list "memory_limiter" "k8s_attributes" "resource/cluster" "filter/trace_noise" "transform/trace_resource" "attributes/redact") -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq $name "otel-gateway" -}}
+  {{- $queue := deepCopy (index $spec.config.exporters "otlp_http/traces").sending_queue -}}
+  {{- $endpoints := list -}}
+  {{- range $i := until (int $root.Values.sampler_replicas) -}}
+    {{- $endpoints = append $endpoints (printf "otel-sampler-collector-%d.otel-sampler-headless.%s.svc:4317" $i $root.Release.Namespace) -}}
+  {{- end -}}
+  {{- $_ := set $spec.config.exporters "load_balancing/traces" (dict "routing_key" "traceID" "resolver" (dict "static" (dict "hostnames" $endpoints)) "protocol" (dict "otlp" (dict "tls" (dict "insecure" true) "timeout" "5s" "sending_queue" (dict "enabled" false) "retry_on_failure" (dict "enabled" false))) "timeout" "0s" "sending_queue" $queue "retry_on_failure" (dict "enabled" true "initial_interval" "1s" "max_interval" "30s" "max_elapsed_time" "0s")) -}}
+  {{- $_ := unset $spec.config.exporters "otlp_http/traces" -}}
+  {{- $_ := set $spec.config.service.pipelines.traces "exporters" (list "load_balancing/traces") -}}
+{{- end -}}
+{{- if eq $root.Values.logs_transport "direct" -}}
+  {{- if or (eq $name "otel-node") (eq $name "otel-cluster") -}}
+    {{- $exporter := deepCopy (index $spec.config.exporters "otlp/metrics") -}}
+    {{- $host := ternary "otel-logs" "otel-gateway" (eq $root.Values.gateway_topology "dual") -}}
+    {{- $_ := set $exporter "endpoint" (printf "%s-collector.%s.svc:4317" $host $root.Release.Namespace) -}}
+    {{- $_ := set $spec.config.exporters "otlp/logs" $exporter -}}
+    {{- $_ := unset $spec.config.exporters "kafka" -}}
+    {{- range $id, $pipe := $spec.config.service.pipelines -}}
+      {{- if hasPrefix "logs" $id -}}{{- $_ := set $pipe "exporters" (list "otlp/logs") -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if or (eq $name "otel-logs") (and (eq $name "otel-gateway") (eq $root.Values.gateway_topology "unified")) -}}
+    {{- $_ := unset $spec.config.receivers "kafka" -}}
+    {{- $_ := set $spec.config.receivers "otlp" (deepCopy $gateway.spec.config.receivers.otlp) -}}
+    {{- $_ := set $spec.config.service.pipelines.logs "receivers" (list "otlp") -}}
+    {{- $_ := set (index $spec.config.exporters "otlp_http/logs") "sending_queue" (deepCopy (index $gateway.spec.config.exporters "otlp_http/traces").sending_queue) -}}
+    {{- if eq $name "otel-logs" -}}
+      {{- $_ := set $spec "mode" "statefulset" -}}
+      {{- range $key := list "volumes" "volumeMounts" "volumeClaimTemplates" "persistentVolumeClaimRetentionPolicy" "podSecurityContext" -}}
+        {{- $_ := set $spec $key (deepCopy (index $gateway.spec $key)) -}}
+      {{- end -}}
+      {{- $_ := set $spec.config.extensions "file_storage" (deepCopy $gateway.spec.config.extensions.file_storage) -}}
+      {{- $_ := set $spec.config.service "extensions" (list "health_check" "file_storage") -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if or (eq $root.Values.logs_transport "direct") (eq $name "otel-sampler") -}}
+  {{- $refs := list -}}
+  {{- range $ref := $spec.envFrom -}}{{- if ne $ref.secretRef.name "otel-kafka" -}}{{- $refs = append $refs $ref -}}{{- end -}}{{- end -}}
+  {{- $_ := set $spec "envFrom" $refs -}}
+{{- end -}}
+{{- if eq $name "otel-node" -}}
+  {{- range $volume := $spec.volumes -}}{{- if eq $volume.name "data" -}}{{- $_ := set $volume.hostPath "path" $root.Values.node_state_directory -}}{{- end -}}{{- end -}}
+  {{- if $root.Values.log_namespaces -}}
+    {{- $paths := list -}}{{- range $ns := $root.Values.log_namespaces -}}{{- $paths = append $paths (printf "/var/log/pods/%s_*/*/*.log" $ns) -}}{{- end -}}
+    {{- $_ := set $spec.config.receivers.filelog "include" $paths -}}
+    {{- $_ := unset $spec.config.receivers.filelog "exclude" -}}
+  {{- end -}}
+{{- end -}}
+{{- $extra := list -}}
+{{- range $key, $value := $root.Values.resource_attributes -}}
+  {{- if or (eq $key "k8s.cluster.name") (eq $key "deployment.environment.name") -}}{{- fail "resource_attributes must not override cluster/environment identity" -}}{{- end -}}
+  {{- $extra = append $extra (dict "key" $key "value" $value "action" "upsert") -}}
+{{- end -}}
+{{- $_ := set $spec.config.processors "resource/extra" (dict "attributes" $extra) -}}
+{{- if $extra -}}
+  {{- range $pipe := $spec.config.service.pipelines -}}
+    {{- $processors := list -}}
+    {{- range $id := $pipe.processors -}}
+      {{- $processors = append $processors $id -}}
+      {{- if or (eq $id "resource/node") (eq $id "resource/cluster") -}}{{- $processors = append $processors "resource/extra" -}}{{- end -}}
+    {{- end -}}
+    {{- $_ := set $pipe "processors" $processors -}}
+  {{- end -}}
+{{- else -}}
+  {{- $_ := unset $spec.config.processors "resource/extra" -}}
+{{- end -}}
+{{- if $root.Values.operator_metrics.enabled -}}
+  {{- $_ := set $spec "podAnnotations" (dict "observability.example.com/operator-ca-checksum" ($operatorCA | sha256sum)) -}}
+{{- end -}}
+{{- $role := trimPrefix "otel-" $name -}}
+{{- $schedule := index $root.Values.scheduling $role -}}
+{{- $_ := set $spec "nodeSelector" $schedule.nodeSelector -}}
+{{- $_ := set $spec "tolerations" $schedule.tolerations -}}
+{{- if $schedule.hostAliases -}}{{- $_ := set $spec "hostAliases" $schedule.hostAliases -}}{{- end -}}
+{{- $_ := set $spec "priorityClassName" $schedule.priorityClassName -}}
+{{- $memory := int (index $root.Values.collector_memory_mib $role) -}}
+{{- $hard := div (mul $memory 80) 100 -}}
+{{- $spike := div (mul $hard 20) 100 -}}
+{{- $soft := sub $hard $spike -}}
+{{- $_ := set $spec "image" $root.Values.collector_image -}}
+{{- $_ := set $spec "imagePullSecrets" $root.Values.image_pull_secrets -}}
+{{- $annotations := $spec.podAnnotations | default dict -}}
+{{- $_ := set $annotations "observability.example.com/rollout-revision" (toString $root.Values.rollout_revision) -}}
+{{- $_ := set $spec "podAnnotations" $annotations -}}
+{{- if $root.Values.credentials.create -}}
+  {{- $_ := set $spec.podAnnotations "observability.example.com/credentials-checksum" (toJson $root.Values.credentials | sha256sum) -}}
+{{- end -}}
+{{- $_ := set $spec.resources.limits "memory" (printf "%dMi" $memory) -}}
+{{- $_ := set $spec.resources.requests "memory" (printf "%dMi" (div $memory 2)) -}}
+{{- $cpu := index $root.Values.collector_cpu $role -}}
+{{- $_ := set $spec.resources.requests "cpu" (toString $cpu.request) -}}
+{{- $_ := set $spec.resources.limits "cpu" (toString $cpu.limit) -}}
+{{- $_ := set $spec.config.processors.memory_limiter "limit_mib" $hard -}}
+{{- $_ := set $spec.config.processors.memory_limiter "spike_limit_mib" $spike -}}
+{{- range $env := $spec.env -}}
+  {{- if eq $env.name "GOMEMLIMIT" -}}
+    {{- $_ := set $env "value" (printf "%dMiB" $soft) -}}
+  {{- end -}}
+{{- end -}}
+{{- range $ref := $spec.envFrom -}}
+  {{- if eq $ref.secretRef.name "otel-backends" -}}{{- $_ := set $ref.secretRef "name" $root.Values.secret_names.backends -}}{{- end -}}
+  {{- if eq $ref.secretRef.name "otel-kafka" -}}{{- $_ := set $ref.secretRef "name" $root.Values.secret_names.kafka -}}{{- end -}}
+{{- end -}}
+{{- $_ := set (index $spec.volumes 0).secret "secretName" $root.Values.secret_names.trust -}}
+{{- range $claim := $spec.volumeClaimTemplates -}}
+  {{- $_ := set $claim.spec "storageClassName" $root.Values.storage_class -}}
+  {{- $_ := set $claim.spec.resources.requests "storage" $root.Values.pvc_size -}}
+{{- end -}}
+{{- if eq $name "otel-gateway" -}}{{- $_ := set $spec "replicas" $root.Values.gateway_replicas -}}{{- end -}}
+{{- if eq $name "otel-logs" -}}{{- $_ := set $spec "replicas" $root.Values.log_gateway_replicas -}}{{- end -}}
+{{- if eq $name "otel-scraper" -}}{{- $_ := set $spec "replicas" $root.Values.scraper_replicas -}}{{- end -}}
+{{- if eq $name "otel-sampler" -}}{{- $_ := set $spec "replicas" $root.Values.sampler_replicas -}}{{- end -}}
+{{- if and (hasKey $spec "replicas") (eq (int $spec.replicas) 1) -}}
+  {{- $_ := set $spec "podDisruptionBudget" (dict "minAvailable" 0) -}}
+{{- end -}}
+{{- range $processor := $spec.config.processors -}}
+  {{- if hasKey $processor "attributes" -}}
+    {{- range $attr := $processor.attributes -}}
+      {{- if eq $attr.key "k8s.cluster.name" -}}{{- $_ := set $attr "value" $root.Values.cluster_name -}}{{- end -}}
+      {{- if eq $attr.key "deployment.environment.name" -}}{{- $_ := set $attr "value" $root.Values.environment -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- range $id, $receiver := $spec.config.receivers -}}
+  {{- if eq $id "otlp" -}}
+    {{- $_ := set $receiver.protocols.grpc "max_recv_msg_size_mib" (int $root.Values.otlp_max_recv_mib) -}}
+    {{- $_ := set $receiver.protocols.http "max_request_body_size" (mul (int $root.Values.otlp_max_recv_mib) 1048576) -}}
+  {{- end -}}
+  {{- if eq $id "filelog" -}}
+    {{- $_ := set $receiver "max_log_size" $root.Values.filelog_max_log_size -}}
+    {{- $_ := set $receiver "start_at" $root.Values.filelog_start_at -}}
+  {{- end -}}
+  {{- if eq $id "kafka" -}}
+    {{- $_ := set $receiver "brokers" $root.Values.kafka_brokers -}}
+    {{- $_ := set $receiver.logs "topics" (list $kafkaTopic) -}}
+    {{- $_ := set $receiver "group_id" $kafkaGroup -}}
+    {{- $_ := unset $receiver "tls" -}}{{- $_ := unset $receiver "auth" -}}
+    {{- if $root.Values.kafka_tls -}}{{- $_ := set $receiver "tls" $root.Values.kafka_tls -}}{{- end -}}
+    {{- if $root.Values.kafka_auth -}}{{- $_ := set $receiver "auth" $root.Values.kafka_auth -}}{{- end -}}
+  {{- end -}}
+  {{- if eq $id "kubeletstats" -}}
+    {{- $_ := set $receiver "ca_file" $root.Values.kubelet_ca_file -}}
+    {{- $_ := set $receiver "endpoint" $root.Values.kubelet_endpoint -}}
+  {{- end -}}
+{{- end -}}
+{{- range $id, $exporter := $spec.config.exporters -}}
+  {{- if and (hasKey $exporter "sending_queue") $exporter.sending_queue.enabled -}}
+    {{- $_ := set $exporter.sending_queue "queue_size" (mul (int $root.Values.exporter_queue_mib) 1048576) -}}
+    {{- $_ := set $exporter.sending_queue "batch" (dict "sizer" "bytes" "flush_timeout" "200ms" "min_size" 8192 "max_size" (mul (int $root.Values.exporter_batch_max_kib) 1024)) -}}
+  {{- end -}}
+  {{- if eq $id "kafka" -}}
+    {{- $_ := set $exporter "brokers" $root.Values.kafka_brokers -}}
+    {{- $_ := set $exporter.logs "topic" $kafkaTopic -}}
+    {{- $_ := unset $exporter "tls" -}}{{- $_ := unset $exporter "auth" -}}
+    {{- if $root.Values.kafka_tls -}}{{- $_ := set $exporter "tls" $root.Values.kafka_tls -}}{{- end -}}
+    {{- if $root.Values.kafka_auth -}}{{- $_ := set $exporter "auth" $root.Values.kafka_auth -}}{{- end -}}
+  {{- end -}}
+  {{- if eq $id "otlp_http/traces" -}}
+    {{- $_ := set $exporter "endpoint" $root.Values.trace_endpoint -}}
+    {{- $_ := set $exporter "headers" (mergeOverwrite $exporter.headers ($root.Values.trace_headers | default dict)) -}}
+  {{- end -}}
+  {{- if eq $id "otlp_http/logs" -}}
+    {{- $_ := set $exporter "endpoint" $root.Values.log_endpoint -}}
+    {{- $_ := set $exporter "headers" (mergeOverwrite $exporter.headers ($root.Values.log_headers | default dict)) -}}
+  {{- end -}}
+  {{- if eq $id "otlp_http/metrics" -}}
+    {{- $_ := set $exporter "endpoint" $root.Values.metrics_endpoint -}}
+    {{- $_ := set $exporter "headers" (mergeOverwrite $exporter.headers ($root.Values.metrics_headers | default dict)) -}}
+  {{- end -}}
+  {{- if eq $id "prometheus_remote_write" -}}
+    {{- $_ := set $exporter.http "endpoint" $root.Values.metrics_endpoint -}}
+    {{- $_ := set $exporter.http "headers" (mergeOverwrite $exporter.http.headers ($root.Values.metrics_headers | default dict)) -}}
+  {{- end -}}
+  {{- if hasPrefix "otlp_http/" $id -}}{{- $_ := set $exporter.tls "ca_file" $root.Values.backend_ca_file -}}{{- end -}}
+  {{- if eq $id "prometheus_remote_write" -}}{{- $_ := set $exporter.http.tls "ca_file" $root.Values.backend_ca_file -}}{{- end -}}
+{{- end -}}
+{{- range $signal := list "traces" "logs" "metrics" -}}
+  {{- $protocol := index $root.Values (index (dict "traces" "trace_protocol" "logs" "log_protocol" "metrics" "metrics_protocol") $signal) -}}
+  {{- $httpID := printf "otlp_http/%s" $signal -}}
+  {{- if and (eq $protocol "otlp_grpc") (hasKey $spec.config.exporters $httpID) -}}
+    {{- $grpcID := printf "otlp/%s" $signal -}}
+    {{- $_ := set $spec.config.exporters $grpcID (index $spec.config.exporters $httpID) -}}
+    {{- $_ := unset $spec.config.exporters $httpID -}}
+    {{- $_ := set (index $spec.config.service.pipelines $signal) "exporters" (list $grpcID) -}}
+  {{- end -}}
+{{- end -}}
+{{- if and $root.Values.aws_sigv4.enabled (hasKey $spec.config.exporters "prometheus_remote_write") -}}
+  {{- $_ := set $spec.config.extensions "sigv4auth" (dict "region" $root.Values.aws_sigv4.region "service" $root.Values.aws_sigv4.service) -}}
+  {{- $_ := set $spec.config.service "extensions" (append $spec.config.service.extensions "sigv4auth") -}}
+  {{- $_ := set (index $spec.config.exporters "prometheus_remote_write").http "auth" (dict "authenticator" "sigv4auth") -}}
+  {{- $_ := unset (index $spec.config.exporters "prometheus_remote_write").http.headers "Authorization" -}}
+{{- end -}}
+{{- if eq $name "otel-scraper" -}}
+  {{- if $root.Values.operator_metrics.enabled -}}
+    {{- $m := $root.Values.operator_metrics -}}
+    {{- $job := dict "job_name" "otel-operator" "scrape_interval" "30s" "scrape_timeout" "10s" "scheme" "https" "authorization" (dict "credentials_file" "/var/run/secrets/kubernetes.io/serviceaccount/token") "tls_config" (dict "ca_file" "/etc/otel/trust/operator-ca.crt" "server_name" $m.server_name) "static_configs" (list (dict "targets" (list (printf "%s.%s.svc:%d" $m.service $m.namespace (int $m.port))))) -}}
+    {{- $_ := set $spec.config.receivers.prometheus "config" (dict "scrape_configs" (list $job)) -}}
+  {{- end -}}
+  {{- if $root.Values.scrape_jobs -}}
+    {{- $config := $spec.config.receivers.prometheus.config | default dict -}}
+    {{- $jobs := $config.scrape_configs | default list -}}
+    {{- $_ := set $spec.config.receivers.prometheus "config" (dict "scrape_configs" (concat $jobs $root.Values.scrape_jobs)) -}}
+  {{- end -}}
+  {{- $_ := set $spec.targetAllocator.prometheusCR "enabled" $root.Values.monitor_resources_enabled -}}
+  {{- $_ := set $spec.targetAllocator "nodeSelector" $root.Values.scheduling.scraper.nodeSelector -}}
+  {{- $_ := set $spec.targetAllocator "tolerations" $root.Values.scheduling.scraper.tolerations -}}
+  {{- if $root.Values.target_allocator_mtls.enabled -}}
+    {{- $_ := set $spec.targetAllocator "mtls" $root.Values.target_allocator_mtls -}}
+  {{- end -}}
+  {{- $_ := set $spec.targetAllocator.prometheusCR "secretNamespaces" (append $root.Values.target_allocator_secret_namespaces $root.Release.Namespace | uniq) -}}
+  {{- $_ := set $spec.targetAllocator "image" $root.Values.target_allocator_image -}}
+  {{- $_ := set $spec.targetAllocator.resources.limits "memory" (printf "%dMi" (int $root.Values.target_allocator_memory_mib)) -}}
+  {{- $_ := set $spec.targetAllocator.prometheusCR "serviceMonitorNamespaceSelector" $root.Values.monitor_namespace_selector -}}
+  {{- $_ := set $spec.targetAllocator.prometheusCR "podMonitorNamespaceSelector" $root.Values.monitor_namespace_selector -}}
+  {{- $_ := set $spec.targetAllocator.prometheusCR "probeNamespaceSelector" $root.Values.monitor_namespace_selector -}}
+  {{- $_ := set $spec.targetAllocator.prometheusCR "scrapeConfigNamespaceSelector" $root.Values.monitor_namespace_selector -}}
+{{- end -}}
+{{- if not $root.Values.persistent_queue -}}
+  {{- range $exporter := $spec.config.exporters -}}
+    {{- if hasKey $exporter "sending_queue" -}}{{- $_ := unset $exporter.sending_queue "storage" -}}{{- end -}}
+  {{- end -}}
+  {{- if $spec.volumeClaimTemplates -}}
+    {{- $_ := unset $spec "volumeClaimTemplates" -}}
+    {{- $_ := unset $spec "persistentVolumeClaimRetentionPolicy" -}}
+    {{- $_ := set $spec "volumes" (append $spec.volumes (dict "name" "data" "emptyDir" (dict))) -}}
+  {{- end -}}
+  {{- $checkpoint := false -}}
+  {{- range $receiver := $spec.config.receivers -}}
+    {{- if eq ($receiver.storage | default "") "file_storage" -}}{{- $checkpoint = true -}}{{- end -}}
+  {{- end -}}
+  {{- if not $checkpoint -}}
+    {{- $_ := unset $spec.config.extensions "file_storage" -}}
+    {{- $_ := set $spec.config.service "extensions" (without $spec.config.service.extensions "file_storage") -}}
+  {{- end -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{ end -}}

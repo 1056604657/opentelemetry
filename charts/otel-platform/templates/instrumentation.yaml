@@ -1,0 +1,14 @@
+{{- $root := . -}}
+{{- range $object := (.Files.Get "files/instrumentation.yaml" | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray) }}
+{{- $_ := set $object.spec "sampler" (dict "type" "always_on") -}}
+{{- $_ := set $object.spec.java "image" $root.Values.java_image -}}
+{{- $_ := set $object.spec.python "image" $root.Values.python_image -}}
+{{- $_ := set $object.spec.nodejs "image" $root.Values.nodejs_image -}}
+{{- range $env := $object.spec.env -}}
+  {{- if eq $env.name "OTEL_RESOURCE_ATTRIBUTES" -}}
+    {{- $_ := set $env "value" (printf "k8s.cluster.name=%s,deployment.environment.name=%s" $root.Values.cluster_name $root.Values.environment) -}}
+  {{- end -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{ end -}}

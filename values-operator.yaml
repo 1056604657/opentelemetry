@@ -1,0 +1,47 @@
+replicaCount: 1
+pdb:
+  create: false
+manager:
+  image:
+    repository: ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator
+    tag: 0.161.0
+  collectorImage:
+    repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
+    tag: 0.163.2
+  targetAllocatorImage:
+    repository: ghcr.io/open-telemetry/opentelemetry-operator/target-allocator
+    tag: 0.161.0
+  autoInstrumentation:
+    go:
+      enabled: false
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  extraArgs:
+  - --metrics-tls-cert-file=/tmp/k8s-webhook-server/serving-certs/tls.crt
+  - --metrics-tls-key-file=/tmp/k8s-webhook-server/serving-certs/tls.key
+  extraEnvs:
+  - name: GOMEMLIMIT
+    value: 384MiB
+admissionWebhooks:
+  pods:
+    failurePolicy: Ignore
+  certManager:
+    enabled: false
+  autoGenerateCert:
+    enabled: true
+    recreate: false
+    certPeriodDays: 365
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        topologyKey: kubernetes.io/hostname
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: opentelemetry-operator

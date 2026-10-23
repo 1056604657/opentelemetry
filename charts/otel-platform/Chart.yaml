@@ -1,0 +1,7 @@
+apiVersion: v2
+appVersion: 0.163.2
+description: OpenTelemetry collectors and native instrumentation, reconciled by the
+  official Operator
+name: otel-platform
+type: application
+version: 0.7.4

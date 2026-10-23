@@ -1,0 +1,29 @@
+{{- range $object := (.Files.Get "files/monitors-network.yaml" | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray) }}
+{{- if or $.Values.monitor_resources_enabled (eq $object.kind "NetworkPolicy") -}}
+{{- if eq $object.metadata.name "otel-otlp-ingress" -}}
+  {{- $_ := set (index (index $object.spec.ingress 0).from 0) "namespaceSelector" $.Values.otlp_namespace_selector -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{ end -}}
+{{ end -}}
+{{- range $monitor := .Values.businessPodMonitors }}
+{{- if not $monitor.spec.jobLabel -}}{{- $_ := set $monitor.spec "jobLabel" "app.kubernetes.io/name" -}}{{- end -}}
+{{- range $endpoint := $monitor.spec.podMetricsEndpoints -}}
+  {{- $common := list
+      (dict "sourceLabels" (list "__meta_kubernetes_namespace") "targetLabel" "k8s_namespace_name")
+      (dict "sourceLabels" (list "__meta_kubernetes_pod_name") "targetLabel" "k8s_pod_name")
+      (dict "sourceLabels" (list "__meta_kubernetes_pod_label_app_kubernetes_io_name") "targetLabel" "service_name") -}}
+  {{- $_ := set $endpoint "relabelings" (concat $common ($endpoint.relabelings | default list)) -}}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ required "businessPodMonitors[].name required" $monitor.name }}
+  namespace: {{ required "businessPodMonitors[].namespace required" $monitor.namespace }}
+  labels:
+    observability.example.com/owner: otel
+spec:
+{{ toYaml $monitor.spec | indent 2 }}
+{{ end -}}

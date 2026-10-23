@@ -1,0 +1,7 @@
+values-prod.yaml
+values-*.local.yaml
+*.local.json
+*.env
+__pycache__/
+.venv/
+.DS_Store

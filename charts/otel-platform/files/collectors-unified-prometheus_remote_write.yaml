@@ -1,0 +1,968 @@
+- apiVersion: opentelemetry.io/v1beta1
+  kind: OpenTelemetryCollector
+  metadata:
+    name: otel-gateway
+    namespace: RELEASE_NAMESPACE
+    labels:
+      observability.example.com/managed: 'true'
+  spec:
+    mode: statefulset
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.163.2
+    serviceAccount: otel-gateway
+    upgradeStrategy: none
+    config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
+        file_storage:
+          directory: /var/lib/otel
+          create_directory: true
+          fsync: true
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 4
+            http:
+              endpoint: 0.0.0.0:4318
+              max_request_body_size: 4194304
+        kafka:
+          brokers:
+          - kafka-0.invalid:9093
+          - kafka-1.invalid:9093
+          - kafka-2.invalid:9093
+          protocol_version: 2.1.0
+          tls:
+            ca_file: /etc/otel/trust/kafka-ca.crt
+            min_version: '1.2'
+          auth:
+            sasl:
+              mechanism: SCRAM-SHA-512
+              username: ${env:KAFKA_USERNAME}
+              password: ${env:KAFKA_PASSWORD}
+          logs:
+            topics:
+            - otel.prod-cluster-01.logs.v1
+            encoding: otlp_proto
+          group_id: otel.prod-cluster-01.log-gateway.v1
+          min_fetch_size: 1
+          max_fetch_size: 4194304
+          max_partition_fetch_size: 4194304
+          partition_processing:
+            independent: false
+          initial_offset: earliest
+          autocommit:
+            enable: true
+            interval: 1s
+          message_marking:
+            after: true
+            on_error: false
+            on_permanent_error: false
+          error_backoff:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+      processors:
+        memory_limiter:
+          check_interval: 1s
+          limit_mib: 1638
+          spike_limit_mib: 327
+        resource/cluster:
+          attributes:
+          - key: k8s.cluster.name
+            value: prod-cluster-01
+            action: upsert
+          - key: deployment.environment.name
+            value: production
+            action: upsert
+        k8s_attributes:
+          auth_type: serviceAccount
+          passthrough: false
+          wait_for_metadata: true
+          wait_for_metadata_timeout: 30s
+          extract:
+            metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.deployment.name
+            - k8s.container.name
+            - container.image.name
+            - container.image.tags
+            labels:
+            - from: pod
+              key: app.kubernetes.io/name
+              tag_name: service.name
+            - from: pod
+              key: app.kubernetes.io/version
+              tag_name: service.version
+            - from: pod
+              key: observability.example.com/enabled
+              tag_name: obs.pod.enabled
+            - from: namespace
+              key: observability.example.com/enabled
+              tag_name: obs.namespace.enabled
+          pod_association:
+          - sources:
+            - from: resource_attribute
+              name: k8s.pod.uid
+          - sources:
+            - from: resource_attribute
+              name: k8s.pod.ip
+      exporters:
+        otlp_http/traces:
+          endpoint: https://traces.invalid:4318
+          compression: gzip
+          timeout: 30s
+          tls:
+            ca_file: /etc/otel/trust/backend-ca.crt
+            min_version: '1.2'
+          headers:
+            Authorization: ${env:TRACES_AUTHORIZATION}
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: true
+            sizer: bytes
+            queue_size: 268435456
+            num_consumers: 1
+            storage: file_storage
+            block_on_overflow: true
+        prometheus_remote_write:
+          http:
+            endpoint: https://metrics.invalid/api/v1/otlp
+            tls:
+              ca_file: /etc/otel/trust/backend-ca.crt
+              min_version: '1.2'
+            headers:
+              Authorization: ${env:METRICS_AUTHORIZATION}
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          remote_write_queue:
+            enabled: true
+            queue_size: 1000
+            num_consumers: 1
+          max_batch_size_bytes: 1048576
+          max_batch_request_parallelism: 1
+          wal:
+            directory: /var/lib/otel/prw
+            buffer_size: 100
+            truncate_frequency: 1m
+          resource_to_telemetry_conversion:
+            enabled: false
+        otlp_http/logs:
+          endpoint: https://logs.invalid:4318
+          compression: gzip
+          timeout: 30s
+          tls:
+            ca_file: /etc/otel/trust/backend-ca.crt
+            min_version: '1.2'
+          headers:
+            Authorization: ${env:LOGS_AUTHORIZATION}
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: false
+      service:
+        extensions:
+        - health_check
+        - file_storage
+        telemetry:
+          logs:
+            level: info
+          metrics:
+            level: normal
+            readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+        pipelines:
+          traces:
+            receivers:
+            - otlp
+            processors:
+            - memory_limiter
+            - k8s_attributes
+            - resource/cluster
+            - attributes/redact
+            exporters:
+            - otlp_http/traces
+          metrics:
+            receivers:
+            - otlp
+            processors:
+            - memory_limiter
+            - k8s_attributes
+            - resource/cluster
+            - transform/metric_labels
+            exporters:
+            - prometheus_remote_write
+          logs:
+            receivers:
+            - kafka
+            processors:
+            - memory_limiter
+            - resource/cluster
+            exporters:
+            - otlp_http/logs
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1024Mi
+      limits:
+        cpu: '2'
+        memory: 2048Mi
+    env:
+    - name: GOMEMLIMIT
+      value: 1311MiB
+    - name: OTEL_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: OTEL_NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: OTEL_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    envFrom:
+    - secretRef:
+        name: otel-backends
+    - secretRef:
+        name: otel-kafka
+    volumes:
+    - name: trust
+      secret:
+        secretName: otel-trust
+    volumeMounts:
+    - name: trust
+      mountPath: /etc/otel/trust
+      readOnly: true
+    - name: data
+      mountPath: /var/lib/otel
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+      runAsUser: 10001
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContext:
+      fsGroup: 10001
+    terminationGracePeriodSeconds: 120
+    observability:
+      metrics:
+        enableMetrics: true
+    replicas: 2
+    podDisruptionBudget:
+      maxUnavailable: 1
+    topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: otel-gateway-collector
+    volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        storageClassName: REPLACE_ME
+        resources:
+          requests:
+            storage: 10Gi
+    startupProbe:
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 60
+    readinessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    livenessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+- apiVersion: opentelemetry.io/v1beta1
+  kind: OpenTelemetryCollector
+  metadata:
+    name: otel-node
+    namespace: RELEASE_NAMESPACE
+    labels:
+      observability.example.com/managed: 'true'
+  spec:
+    mode: daemonset
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.163.2
+    serviceAccount: otel-node
+    upgradeStrategy: none
+    config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
+        file_storage:
+          directory: /var/lib/otel
+          create_directory: true
+          fsync: true
+      receivers:
+        filelog:
+          include:
+          - /var/log/pods/*/*/*.log
+          exclude:
+          - /var/log/pods/RELEASE_NAMESPACE_*/*/*.log
+          include_file_path: true
+          start_at: beginning
+          storage: file_storage
+          max_log_size: 256KiB
+          max_concurrent_files: 64
+          max_batches: 1
+          retry_on_failure:
+            enabled: true
+            max_elapsed_time: 0s
+          operators: []
+        kubeletstats: {}
+        hostmetrics: {}
+      processors:
+        memory_limiter:
+          check_interval: 1s
+          limit_mib: 819
+          spike_limit_mib: 163
+        resource/cluster:
+          attributes:
+          - key: k8s.cluster.name
+            value: prod-cluster-01
+            action: upsert
+          - key: deployment.environment.name
+            value: production
+            action: upsert
+        filter/log_opt_in:
+          error_mode: propagate
+          logs:
+            log_record:
+            - resource.attributes["obs.pod.enabled"] == "false"
+            - resource.attributes["obs.pod.enabled"] != "true" and resource.attributes["obs.namespace.enabled"] != "true" and not ((resource.attributes["obs.pod.inject.java"]
+              != nil and resource.attributes["obs.pod.inject.java"] != "false" and resource.attributes["obs.pod.inject.java"] != "") or (resource.attributes["obs.pod.inject.java"]
+              == nil and resource.attributes["obs.namespace.inject.java"] != nil and resource.attributes["obs.namespace.inject.java"] != "false"
+              and resource.attributes["obs.namespace.inject.java"] != "") or (resource.attributes["obs.pod.inject.python"] != nil and resource.attributes["obs.pod.inject.python"]
+              != "false" and resource.attributes["obs.pod.inject.python"] != "") or (resource.attributes["obs.pod.inject.python"] == nil and resource.attributes["obs.namespace.inject.python"]
+              != nil and resource.attributes["obs.namespace.inject.python"] != "false" and resource.attributes["obs.namespace.inject.python"]
+              != "") or (resource.attributes["obs.pod.inject.nodejs"] != nil and resource.attributes["obs.pod.inject.nodejs"] != "false" and resource.attributes["obs.pod.inject.nodejs"]
+              != "") or (resource.attributes["obs.pod.inject.nodejs"] == nil and resource.attributes["obs.namespace.inject.nodejs"] != nil and
+              resource.attributes["obs.namespace.inject.nodejs"] != "false" and resource.attributes["obs.namespace.inject.nodejs"] != "") or (resource.attributes["obs.pod.inject.sdk"]
+              != nil and resource.attributes["obs.pod.inject.sdk"] != "false" and resource.attributes["obs.pod.inject.sdk"] != "") or (resource.attributes["obs.pod.inject.sdk"]
+              == nil and resource.attributes["obs.namespace.inject.sdk"] != nil and resource.attributes["obs.namespace.inject.sdk"] != "false"
+              and resource.attributes["obs.namespace.inject.sdk"] != ""))
+      exporters:
+        kafka:
+          brokers:
+          - kafka-0.invalid:9093
+          - kafka-1.invalid:9093
+          - kafka-2.invalid:9093
+          protocol_version: 2.1.0
+          tls:
+            ca_file: /etc/otel/trust/kafka-ca.crt
+            min_version: '1.2'
+          auth:
+            sasl:
+              mechanism: SCRAM-SHA-512
+              username: ${env:KAFKA_USERNAME}
+              password: ${env:KAFKA_PASSWORD}
+          logs:
+            topic: otel.prod-cluster-01.logs.v1
+            encoding: otlp_proto
+          producer:
+            required_acks: -1
+            compression: zstd
+            max_message_bytes: 4194304
+            allow_auto_topic_creation: false
+          partition_logs_by_resource_attributes: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: true
+            sizer: bytes
+            queue_size: 268435456
+            num_consumers: 1
+            storage: file_storage
+            block_on_overflow: true
+        otlp/metrics:
+          endpoint: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4317
+          tls:
+            insecure: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: true
+            sizer: bytes
+            queue_size: 268435456
+            num_consumers: 1
+            storage: file_storage
+            block_on_overflow: true
+      service:
+        extensions:
+        - health_check
+        - file_storage
+        telemetry:
+          logs:
+            level: info
+          metrics:
+            level: normal
+            readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+        pipelines:
+          logs:
+            receivers:
+            - filelog
+            processors:
+            - memory_limiter
+            - k8s_attributes
+            - filter/log_opt_in
+            - resource/node
+            - transform/log_json
+            exporters:
+            - kafka
+          metrics:
+            receivers:
+            - kubeletstats
+            - hostmetrics
+            processors:
+            - memory_limiter
+            - resource/node
+            exporters:
+            - otlp/metrics
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: '2'
+        memory: 1024Mi
+    env:
+    - name: GOMEMLIMIT
+      value: 656MiB
+    - name: OTEL_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: OTEL_NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: OTEL_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    envFrom:
+    - secretRef:
+        name: otel-kafka
+    volumes:
+    - name: trust
+      secret:
+        secretName: otel-trust
+    - name: logs
+      hostPath:
+        path: /var/log/pods
+        type: Directory
+    - name: hostfs
+      hostPath:
+        path: /
+        type: Directory
+    - name: data
+      hostPath:
+        path: /var/lib/otel-node
+        type: DirectoryOrCreate
+    volumeMounts:
+    - name: trust
+      mountPath: /etc/otel/trust
+      readOnly: true
+    - name: logs
+      mountPath: /var/log/pods
+      readOnly: true
+    - name: hostfs
+      mountPath: /hostfs
+      readOnly: true
+      mountPropagation: HostToContainer
+    - name: data
+      mountPath: /var/lib/otel
+      readOnly: false
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+      runAsUser: 0
+      runAsNonRoot: false
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContext:
+      fsGroup: 10001
+    terminationGracePeriodSeconds: 120
+    observability:
+      metrics:
+        enableMetrics: true
+    nodeSelector:
+      kubernetes.io/os: linux
+    tolerations:
+    - operator: Exists
+    daemonSetUpdateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+    startupProbe:
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 60
+    readinessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    livenessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+- apiVersion: opentelemetry.io/v1beta1
+  kind: OpenTelemetryCollector
+  metadata:
+    name: otel-cluster
+    namespace: RELEASE_NAMESPACE
+    labels:
+      observability.example.com/managed: 'true'
+  spec:
+    mode: statefulset
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.163.2
+    serviceAccount: otel-cluster
+    upgradeStrategy: none
+    config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
+        file_storage:
+          directory: /var/lib/otel
+          create_directory: true
+          fsync: true
+      receivers:
+        k8s_cluster: {}
+        k8s_events:
+          auth_type: serviceAccount
+          storage: file_storage
+      processors:
+        memory_limiter:
+          check_interval: 1s
+          limit_mib: 819
+          spike_limit_mib: 163
+        resource/cluster:
+          attributes:
+          - key: k8s.cluster.name
+            value: prod-cluster-01
+            action: upsert
+          - key: deployment.environment.name
+            value: production
+            action: upsert
+      exporters:
+        otlp/metrics:
+          endpoint: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4317
+          tls:
+            insecure: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: true
+            sizer: bytes
+            queue_size: 268435456
+            num_consumers: 1
+            storage: file_storage
+            block_on_overflow: true
+        kafka:
+          brokers:
+          - kafka-0.invalid:9093
+          - kafka-1.invalid:9093
+          - kafka-2.invalid:9093
+          protocol_version: 2.1.0
+          tls:
+            ca_file: /etc/otel/trust/kafka-ca.crt
+            min_version: '1.2'
+          auth:
+            sasl:
+              mechanism: SCRAM-SHA-512
+              username: ${env:KAFKA_USERNAME}
+              password: ${env:KAFKA_PASSWORD}
+          logs:
+            topic: otel.prod-cluster-01.logs.v1
+            encoding: otlp_proto
+          producer:
+            required_acks: -1
+            compression: zstd
+            max_message_bytes: 4194304
+            allow_auto_topic_creation: false
+          partition_logs_by_resource_attributes: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: true
+            sizer: bytes
+            queue_size: 268435456
+            num_consumers: 1
+            storage: file_storage
+            block_on_overflow: true
+      service:
+        extensions:
+        - health_check
+        - file_storage
+        telemetry:
+          logs:
+            level: info
+          metrics:
+            level: normal
+            readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+        pipelines:
+          metrics:
+            receivers:
+            - k8s_cluster
+            processors:
+            - memory_limiter
+            - resource/cluster
+            exporters:
+            - otlp/metrics
+          logs/events:
+            receivers:
+            - k8s_events
+            processors:
+            - memory_limiter
+            - resource/cluster
+            exporters:
+            - kafka
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: '2'
+        memory: 1024Mi
+    env:
+    - name: GOMEMLIMIT
+      value: 656MiB
+    - name: OTEL_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: OTEL_NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: OTEL_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    envFrom:
+    - secretRef:
+        name: otel-kafka
+    volumes:
+    - name: trust
+      secret:
+        secretName: otel-trust
+    volumeMounts:
+    - name: trust
+      mountPath: /etc/otel/trust
+      readOnly: true
+    - name: data
+      mountPath: /var/lib/otel
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+      runAsUser: 10001
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContext:
+      fsGroup: 10001
+    terminationGracePeriodSeconds: 120
+    observability:
+      metrics:
+        enableMetrics: true
+    replicas: 1
+    podDisruptionBudget:
+      minAvailable: 0
+    topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: otel-cluster-collector
+    volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        storageClassName: REPLACE_ME
+        resources:
+          requests:
+            storage: 10Gi
+    startupProbe:
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 60
+    readinessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    livenessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+- apiVersion: opentelemetry.io/v1beta1
+  kind: OpenTelemetryCollector
+  metadata:
+    name: otel-scraper
+    namespace: RELEASE_NAMESPACE
+    labels:
+      observability.example.com/managed: 'true'
+  spec:
+    mode: statefulset
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.163.2
+    serviceAccount: otel-scraper
+    upgradeStrategy: none
+    config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
+        file_storage:
+          directory: /var/lib/otel
+          create_directory: true
+          fsync: true
+      receivers:
+        prometheus:
+          target_allocator:
+            endpoint: http://otel-scraper-targetallocator.RELEASE_NAMESPACE.svc:80
+            interval: 30s
+            collector_id: ${env:OTEL_POD_NAME}
+      processors:
+        memory_limiter:
+          check_interval: 1s
+          limit_mib: 1638
+          spike_limit_mib: 327
+        resource/cluster:
+          attributes:
+          - key: k8s.cluster.name
+            value: prod-cluster-01
+            action: upsert
+          - key: deployment.environment.name
+            value: production
+            action: upsert
+      exporters:
+        otlp/metrics:
+          endpoint: http://otel-gateway-collector.RELEASE_NAMESPACE.svc:4317
+          tls:
+            insecure: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+            max_elapsed_time: 0s
+          sending_queue:
+            enabled: true
+            sizer: bytes
+            queue_size: 268435456
+            num_consumers: 1
+            storage: file_storage
+            block_on_overflow: true
+      service:
+        extensions:
+        - health_check
+        - file_storage
+        telemetry:
+          logs:
+            level: info
+          metrics:
+            level: normal
+            readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+        pipelines:
+          metrics:
+            receivers:
+            - prometheus
+            processors:
+            - memory_limiter
+            - resource/cluster
+            exporters:
+            - otlp/metrics
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1024Mi
+      limits:
+        cpu: '2'
+        memory: 2048Mi
+    env:
+    - name: GOMEMLIMIT
+      value: 1311MiB
+    - name: OTEL_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: OTEL_NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: OTEL_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    envFrom: []
+    volumes:
+    - name: trust
+      secret:
+        secretName: otel-trust
+    volumeMounts:
+    - name: trust
+      mountPath: /etc/otel/trust
+      readOnly: true
+    - name: data
+      mountPath: /var/lib/otel
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+      runAsUser: 10001
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContext:
+      fsGroup: 10001
+    terminationGracePeriodSeconds: 120
+    observability:
+      metrics:
+        enableMetrics: true
+    replicas: 2
+    podDisruptionBudget:
+      maxUnavailable: 1
+    topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: otel-scraper-collector
+    volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        storageClassName: REPLACE_ME
+        resources:
+          requests:
+            storage: 10Gi
+    targetAllocator:
+      enabled: true
+      replicas: 1
+      image: ghcr.io/open-telemetry/opentelemetry-operator/target-allocator:0.161.0
+      serviceAccount: otel-targetallocator
+      allocationStrategy: consistent-hashing
+      filterStrategy: relabel-config
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      prometheusCR:
+        enabled: true
+        denyFSAccessThroughSMs: true
+        serviceMonitorSelector:
+          matchLabels:
+            observability.example.com/owner: otel
+        podMonitorSelector:
+          matchLabels:
+            observability.example.com/owner: otel
+        probeSelector:
+          matchLabels:
+            observability.example.com/owner: otel
+        scrapeConfigSelector:
+          matchLabels:
+            observability.example.com/owner: otel
+        serviceMonitorNamespaceSelector: {}
+        podMonitorNamespaceSelector: {}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+    startupProbe:
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 60
+    readinessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    livenessProbe:
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
