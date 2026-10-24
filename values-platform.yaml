@@ -36,6 +36,13 @@ kafka_tls:
   # 私有 CA 时添加 ca_file: /etc/otel/trust/kafka-ca.crt
 
 # 公有 CA 保持空；私有 CA 改成 /etc/otel/trust/backend-ca.crt。
+# 【主流云托管 K8s 三个 CA 都不用填】阿里云 ACK、AWS EKS、百度云 CCE 等托管集群的
+# kubelet 证书由集群 CA 签发，Pod 内 ServiceAccount CA 即集群 CA，
+# kubelet_ca_file 保持默认；后端为公有证书时 backend_ca_file 留空用系统信任库。
+# 仅以下情况才填：后端用私有/自签 CA（找后端团队要）、kubelet 用独立 CA 或证书
+# 只有 DNS SAN（找集群管理员要，决策树见 01-架构文档.md#证书适配）。
+# Serverless/虚拟节点集群（ACK Serverless、EKS Fargate 等）节点对 Pod 不可见，
+# Node 采集整体不适用，先评估架构再安装。
 backend_ca_file: ''
 # 按目标集群 kubelet 的证书 CA/SAN 填写，保持证书校验。
 kubelet_ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
@@ -50,6 +57,7 @@ credentials:
   kafka:
     KAFKA_USERNAME: REPLACE_ME
     KAFKA_PASSWORD: REPLACE_ME
+  # 云托管集群（ACK/EKS/CCE）默认三个全部留空，见上方 CA 说明。
   trust:
     backend-ca.crt: ''         # 私有 CA 时填写 PEM，可使用 YAML 的 | 多行格式
     kafka-ca.crt: ''
