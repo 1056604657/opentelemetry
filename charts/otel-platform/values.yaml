@@ -578,14 +578,24 @@ aws_sigv4:
   region: ''
   service: aps
 # 上游 latency 使用严格 > 且按毫秒取整；1999 表示保留耗时至少 2000ms。
+#
+# 【2026-10-24 new-dev 压测实测，勿低于此配置】
+# num_traces 是每个 sampler 副本的待决 trace 上限；填满速率为 num_traces/decision_wait，
+# 超过后旧 trace 在决策前被逐出——不是渐变衰减而是断崖：749 traces/s（375/s/副本）时
+# num_traces=10000 实测保留数为 0（errors/slow 全丢，且 refused/队列指标无任何异常，静默故障）。
+# 容量公式：num_traces >= 1.5 x 集群 traces/s x decision_wait / sampler_replicas。
+# 200 微服务按 20 QPS/服务 = 4000 traces/s：4000x30/2x1.5 = 90000；取 200000 后实测
+# 6405 traces/s 健康（保留率与策略精确一致，sampler 内存 852Mi/4096Mi）。
+# decision_cache 同数量级；内存估算约 1.5KB x 5 spans x 待决数，200k 上限约需 1.5GiB/副本。
+# 本默认值与 values-telemetry.yaml 保持一致；生效值始终以 -f values-telemetry.yaml 为准。
 tail_sampling:
   decision_wait: 30s
-  num_traces: 10000
+  num_traces: 200000
   expected_new_traces_per_sec: 0
   maximum_trace_size_bytes: 5242880
   decision_cache:
-    sampled_cache_size: 100000
-    non_sampled_cache_size: 100000
+    sampled_cache_size: 300000
+    non_sampled_cache_size: 300000
   policies:
   - name: errors
     type: status_code

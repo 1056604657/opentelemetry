@@ -54,7 +54,7 @@ helm upgrade --install otel-platform ./charts/otel-platform-0.7.5.tgz \
 ## 新集群安装前必读
 
 1. **`values-platform.yaml` 是模板不是默认值**：`cluster_name` 等字段留空即被 `validate.yaml` 拒绝安装，必须复制为 `values-<集群名>.local.yaml` 填写；该文件含真实凭据，**不要入库或分享**。
-2. **`num_traces` 按集群速率与副本数核算**：公式 `num_traces ≥ 1.5 × 集群 traces/s × decision_wait / sampler_replicas`，当前 200000 对应 4,000 traces/s 目标；超限是静默断崖（无报错、保留归零），务必按告警 `sampled/new_trace_id_received` 监控。
+2. **`num_traces` 按集群速率与副本数核算**：公式 `num_traces ≥ 1.5 × 集群 traces/s × decision_wait / sampler_replicas`，当前 200000 对应 4,000 traces/s 目标（chart 默认值与随包 `values-telemetry.yaml` 一致，均为 200000 / 300000×2）；超限是静默断崖（无报错、保留归零），务必按告警 `sampled/new_trace_id_received` 监控。
 3. **`log_namespaces` / `otlp_namespace_selector` / `monitor_namespace_selector`**：new-dev 的收紧值只适用于测试集群，生产留默认（全集群 + opt-in 注解过滤），照抄会只采 2 个 namespace。
 4. **`collector_memory_mib`**：与节点/集群实际可调度资源核对后再调整，memory_limiter 与 GOMEMLIMIT 会自动联动。
 5. **new-dev 专属参数不复制到生产**：CA、节点 hostAliases 映射、内存队列、访问凭据仅适用于该测试集群（见[生产审查报告](03-生产审查报告.md) A 类 8 项）。
