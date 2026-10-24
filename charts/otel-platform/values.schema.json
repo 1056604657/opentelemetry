@@ -386,6 +386,18 @@
         "kafka"
       ]
     },
+    "log_export_consumers": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "log_batch_size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "log_batch_timeout": {
+      "type": "string",
+      "pattern": "^[0-9]+(ms|s|m)$"
+    },
     "sampler_replicas": {
       "type": "integer",
       "minimum": 1

@@ -560,6 +560,14 @@ scheduling:
     tolerations: []
     priorityClassName: ''
 logs_transport: direct
+# 日志导出并发与攒批（0.7.5 新增）。new-dev 实测：后端（nginx→logs-ingest→ES）
+# 单请求延迟 ≈1.05ms/条 + 固定开销，并行约 4，总吞吐上限 ~3.8k 条/s；
+# 8192/4=3,877、8192/8=3,553、16384/4=3,892 条/s——加并发只排队、加批量只加延迟，
+# 均无法突破后端上限，故默认 8192/4。后端上限更高时按比例上调并发。
+# log_batch_size: 0 关闭攒批。
+log_export_consumers: 4
+log_batch_size: 8192
+log_batch_timeout: 1s
 sampler_replicas: 2
 monitor_resources_enabled: true
 scrape_jobs: []

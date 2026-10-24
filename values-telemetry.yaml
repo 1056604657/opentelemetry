@@ -8,6 +8,15 @@
 # 附加资源属性：所有信号统一应用；cluster/environment 仍由平台必填参数决定。
 resource_attributes: {}
 
+# 日志导出并发与攒批（0.7.5 新增，采用 chart 默认 4/8192/1s）。
+# new-dev 实测证据见 04-压测报告.md 第九节：后端（nginx→logs-ingest→ES）并行约 4、
+# 单请求延迟 ≈1.05ms/条，总吞吐上限 ~3.8k 条/s；8192/4=3,877、8192/8=3,553、16384/4=3,892 条/s，
+# 加并发/加批量均无法突破后端上限、只增延迟，故保持默认值。
+# 修复前（无攒批+单消费者）全链仅 ~95 条/s；全链零日志丢失，过载背压至 node collector。
+log_export_consumers: 4
+log_batch_size: 8192
+log_batch_timeout: 1s
+
 # 默认保留采样后的 spans；drop_noise=true 才启用下方精确路由降噪。
 # 只过滤非错误的 SERVER 健康检查 span，可能造成 trace 缺段；不按任意 URL/静态后缀全局丢弃。
 # SDK always_on；独立采样器按 traceID 聚合，策略见下方 tail_sampling。

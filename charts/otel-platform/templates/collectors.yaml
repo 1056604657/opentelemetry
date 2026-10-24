@@ -88,6 +88,11 @@
     {{- $_ := set $spec.config.receivers "otlp" (deepCopy $gateway.spec.config.receivers.otlp) -}}
     {{- $_ := set $spec.config.service.pipelines.logs "receivers" (list "otlp") -}}
     {{- $_ := set (index $spec.config.exporters "otlp_http/logs") "sending_queue" (deepCopy (index $gateway.spec.config.exporters "otlp_http/traces").sending_queue) -}}
+  {{- $_ := set (index (index $spec.config.exporters "otlp_http/logs") "sending_queue") "num_consumers" (int $root.Values.log_export_consumers) -}}
+  {{- if gt (int $root.Values.log_batch_size) 0 -}}
+    {{- $_ := set $spec.config.processors "batch/logs" (dict "send_batch_size" (int $root.Values.log_batch_size) "send_batch_max_size" (mul (int $root.Values.log_batch_size) 2) "timeout" $root.Values.log_batch_timeout) -}}
+    {{- $_ := set (index $spec.config.service.pipelines "logs") "processors" (append (index (index $spec.config.service.pipelines "logs") "processors") "batch/logs") -}}
+  {{- end -}}
     {{- if eq $name "otel-logs" -}}
       {{- $_ := set $spec "mode" "statefulset" -}}
       {{- range $key := list "volumes" "volumeMounts" "volumeClaimTemplates" "persistentVolumeClaimRetentionPolicy" "podSecurityContext" -}}
