@@ -14,7 +14,6 @@ production-observability/
 ├── charts/
 │   ├── opentelemetry-operator-0.126.1.tgz
 │   ├── otel-platform-0.7.5.tgz
-│   ├── SHA256SUMS
 │   └── otel-platform/         # 安装包对应源码，日后维护使用
 └── new-dev集群验证/            # 当前测试集群配置、安装步骤及访问凭据
 ```
@@ -22,18 +21,15 @@ production-observability/
 ## 快速开始
 
 ```bash
-# 1. 校验安装包完整性
-shasum -a 256 -c charts/SHA256SUMS
-
-# 2. 复制生产模板并按集群填写（cluster_name / storage_class / 三个后端 endpoint / 三个 token / 私有 CA）
+# 1. 复制生产模板并按集群填写（cluster_name / storage_class / 三个后端 endpoint / 三个 token / 私有 CA）
 cp values-platform.yaml values-<集群名>.local.yaml
 
-# 3. 安装 Operator（确认集群内没有已存在的 Operator 或 CRD）
+# 2. 安装 Operator（确认集群内没有已存在的 Operator 或 CRD）
 helm upgrade --install otel-operator ./charts/opentelemetry-operator-0.126.1.tgz \
   --kube-context <context> --namespace opentelemetry-operator-system --create-namespace \
   -f values-operator.yaml --wait --timeout 10m
 
-# 4. 安装采集平台（telemetry values 在前、集群 values 在后，后者覆盖前者）
+# 3. 安装采集平台（telemetry values 在前、集群 values 在后，后者覆盖前者）
 helm upgrade --install otel-platform ./charts/otel-platform-0.7.5.tgz \
   --kube-context <context> --namespace observability --create-namespace \
   -f values-telemetry.yaml -f values-<集群名>.local.yaml --wait --timeout 10m
@@ -61,7 +57,7 @@ helm upgrade --install otel-platform ./charts/otel-platform-0.7.5.tgz \
 
 ## 维护说明
 
-- chart 源码在 `charts/otel-platform/`，与 `otel-platform-0.7.5.tgz` 对应；**修改源码后必须重新打包并更新 `charts/SHA256SUMS`**，否则 `shasum -c` 校验失败。
+- chart 源码在 `charts/otel-platform/`，与 `otel-platform-0.7.5.tgz` 对应；**修改源码后必须重新打包**（`helm package charts/otel-platform -d charts`），不能只改目录却继续装旧包。
 - Operator chart（`opentelemetry-operator-0.126.1.tgz`）保持官方原样，未做任何修改；平台差异全部通过 `values-*.yaml` 覆盖。
 - 升级用 `helm upgrade`（命令同快速开始第 4 步）；collector `terminationGracePeriodSeconds=120`，滚动更新旧实例排水最长约 2 分钟，`rollout status` 超时建议设 ≥240s。
 - 样例、测试工具、原始报告、缓存和旧版安装包已清理。安装不依赖 Python 生成器或测试目录。
