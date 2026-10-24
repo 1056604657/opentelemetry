@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tg-errors
+  namespace: otel-java-validation
+  labels:
+    app: tg-errors
+    purpose: otel-loadtest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tg-errors
+  template:
+    metadata:
+      labels:
+        app: tg-errors
+    spec:
+      containers:
+      - name: tg
+        image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.162.0
+        args:
+        - traces
+        - --otlp-endpoint=otel-gateway-collector.observability.svc:4318
+        - --otlp-http
+        - --otlp-insecure
+        - --workers=1
+        - --rate=40
+        - --duration=inf
+        - --child-spans=4
+        - --status-code=Error
+        - --batch-size=128
+        resources:
+          requests:
+            cpu: 500m
+            memory: 128Mi
+          limits:
+            cpu: '1'
+            memory: 256Mi
