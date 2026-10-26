@@ -13,9 +13,9 @@ production-observability/
 ├── values-operator.yaml       # Operator配置
 ├── charts/
 │   ├── opentelemetry-operator-0.126.1.tgz
-│   ├── otel-platform-0.7.5.tgz
+│   ├── otel-platform-0.7.6.tgz
 │   └── otel-platform/         # 安装包对应源码，日后维护使用
-└── new-dev集群验证/            # 当前测试集群配置、安装步骤及访问凭据
+└── new-dev集群验证/            # 仅保留已有本地集群配置与凭据，不入库
 ```
 
 ## 快速开始
@@ -30,14 +30,16 @@ helm upgrade --install otel-operator ./charts/opentelemetry-operator-0.126.1.tgz
   -f values-operator.yaml --wait --timeout 10m
 
 # 3. 安装采集平台（telemetry values 在前、集群 values 在后，后者覆盖前者）
-helm upgrade --install otel-platform ./charts/otel-platform-0.7.5.tgz \
+helm upgrade --install otel-platform ./charts/otel-platform-0.7.6.tgz \
   --kube-context <context> --namespace observability --create-namespace \
   -f values-telemetry.yaml -f values-<集群名>.local.yaml --wait --timeout 10m
 ```
 
 字段含义、后端地址格式、 rollout 验收命令见[部署文档](02-部署文档.md)；接入第一个 Java 服务、灰度与推广流程见同文档第 5 节起。
 
-## new-dev 已验证结论（2026-10-24 压测）
+## new-dev 历史验证结论（2026-10-24 压测）
+
+以下为 0.7.5、30 秒尾采样窗的历史压测摘要，不代表 0.7.6 的峰值容量，也未覆盖超过 64 文件时的日志饥饿。0.7.6 修正文件遍历、默认 60 秒尾采样窗及空 Metric 清理；整改结果见 [F1–F3 整改验证报告](F1-F3整改验证-2026-10-26.md)，完整风险清单见 [生产部署前全面分析](生产部署前全面分析报告-2026-10-26.md)。
 
 | 链路 | 结论 |
 |---|---|
@@ -45,19 +47,21 @@ helm upgrade --install otel-platform ./charts/otel-platform-0.7.5.tgz \
 | logs | 导出吞吐 ~95 → 3,877 条/s（41 倍）、全链零丢失；**后端持续摄入上限 ~3.8k 条/s**，200 微服务上线前需按实际日志量复核后端容量 |
 | 注入 | Java 17/21 + Spring Boot 3.5.16 真实自动注入，Prometheus / ES / Tempo 三信号低流量验证通过 |
 
-完整数据、复现步骤与边界见[压测报告](04-压测报告.md)；上线前风险清单（P0/P1/P2 分级）见[生产审查报告](03-生产审查报告.md)。
+详细报告已按精简要求清理，历史验证摘要与边界见[架构文档](01-架构文档.md#版本验证)；新集群按部署文档重新验收。
 
 ## 新集群安装前必读
 
 1. **`values-platform.yaml` 是模板不是默认值**：`cluster_name` 等字段留空即被 `validate.yaml` 拒绝安装，必须复制为 `values-<集群名>.local.yaml` 填写；该文件含真实凭据，**不要入库或分享**。
-2. **`num_traces` 按集群速率与副本数核算**：公式 `num_traces ≥ 1.5 × 集群 traces/s × decision_wait / sampler_replicas`，当前 200000 对应 4,000 traces/s 目标（chart 默认值与随包 `values-telemetry.yaml` 一致，均为 200000 / 300000×2）；超限是静默断崖（无报错、保留归零），务必按告警 `sampled/new_trace_id_received` 监控。
+2. **`num_traces` 按集群速率与副本数核算**：公式 `num_traces ≥ 1.5 × 集群 traces/s × decision_wait / sampler_replicas`，当前 60 秒窗、两副本按 4,000 traces/s 和 1.5 倍余量需 180000 条/副本，200000 提供数量余量；实际 RSS/吞吐仍需验收（chart 默认值与随包 `values-telemetry.yaml` 一致，均为 200000 / 300000×2）；超限是静默断崖（无报错、保留归零），务必按告警 `sampled/new_trace_id_received` 监控。
 3. **`log_namespaces` / `otlp_namespace_selector` / `monitor_namespace_selector`**：new-dev 的收紧值只适用于测试集群，生产留默认（全集群 + opt-in 注解过滤），照抄会只采 2 个 namespace。
 4. **`collector_memory_mib`**：与节点/集群实际可调度资源核对后再调整，memory_limiter 与 GOMEMLIMIT 会自动联动。
-5. **new-dev 专属参数不复制到生产**：CA、节点 hostAliases 映射、内存队列、访问凭据仅适用于该测试集群（见[生产审查报告](03-生产审查报告.md) A 类 8 项）。
+5. **new-dev 专属参数不复制到生产**：CA、节点 hostAliases 映射、内存队列、访问凭据仅适用于该测试集群（见[云环境适配](01-架构文档.md#云环境)）。
+6. **选择器要看最终合并结果**：全新生产配置默认`{}`正常；只有叠加受限values后，再写`{}`才无法清除旧matchLabels/matchExpressions。生产不加载new-dev覆盖文件，恢复范围按[选择器合并](01-架构文档.md#选择器合并)检查最终CR和跨namespace抓取，不要求所有场景统一写null。
+7. **告警先核对真实标签**：本次`up{job=~"otel-.*"}`只匹配Operator、漏掉Collector；不是永远返回空。Collector按实际集群/namespace/Pod标签匹配，并同时检测少副本与整组缺数，见[自监控告警](01-架构文档.md#自监控告警)。
 
 ## 维护说明
 
-- chart 源码在 `charts/otel-platform/`，与 `otel-platform-0.7.5.tgz` 对应；**修改源码后必须重新打包**（`helm package charts/otel-platform -d charts`），不能只改目录却继续装旧包。
+- chart 源码在 `charts/otel-platform/`，与 `otel-platform-0.7.6.tgz` 对应；**修改源码后必须重新打包**（`helm package charts/otel-platform -d charts`），不能只改目录却继续装旧包。
 - Operator chart（`opentelemetry-operator-0.126.1.tgz`）保持官方原样，未做任何修改；平台差异全部通过 `values-*.yaml` 覆盖。
 - 升级用 `helm upgrade`（命令同快速开始第 4 步）；collector `terminationGracePeriodSeconds=120`，滚动更新旧实例排水最长约 2 分钟，`rollout status` 超时建议设 ≥240s。
-- 样例、测试工具、原始报告、缓存和旧版安装包已清理。安装不依赖 Python 生成器或测试目录。
+- 测试脚本、原始数据、执行计划和测试备份已清理；验证结论保留在分析及整改报告中。安装只依赖 Helm、kubectl 和部署文件。0.7.5归档保留供回滚核对。

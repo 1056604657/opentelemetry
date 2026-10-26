@@ -404,8 +404,8 @@ log_processing:
     layout: '%Y-%m-%d %H:%M:%S.%L'
 
 
-# 尾采样：满足任一规则即保留。30s 从首个收到的 span 开始计时。
-# 超大 trace、迟到 span、待决状态重启丢失等边界见架构文档。
+# 尾采样：满足任一规则即保留。60s 从首个收到的 span 开始计时。
+# 超大 trace、超窗 span、故障丢失及正常关闭的部分数据决策等边界见架构文档。
 # 上游 latency 使用严格 > 且按毫秒取整；1999 表示保留耗时至少 2000ms。
 #
 # 【2026-10-24 new-dev 压测实测，勿低于此配置】
@@ -416,8 +416,10 @@ log_processing:
 # 200 微服务按 20 QPS/服务 = 4000 traces/s：4000x30/2x1.5 = 90000；取 200000 后实测
 # 5269 traces/s 健康（保留率与策略精确一致，sampler 内存 739Mi/4096Mi）。
 # decision_cache 同数量级；内存估算约 1.5KB x 5 spans x 待决数，200k 上限约需 1.5GiB/副本。
+# 0.7.6 默认等待 60s；4000 x 60 / 2 x 1.5 = 180000，现有 200000 条/副本满足数量预算。
+# 上述历史吞吐验证使用 30s；60s 的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
 tail_sampling:
-  decision_wait: 30s
+  decision_wait: 60s
   num_traces: 200000
   expected_new_traces_per_sec: 0
   maximum_trace_size_bytes: 5242880

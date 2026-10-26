@@ -55,6 +55,9 @@
   {{- $_ := set $spec.config.processors "attributes/redact" (deepCopy $root.Values.trace_processing.redact) -}}
   {{- $_ := set $spec.config.processors "transform/trace_resource" (deepCopy $root.Values.trace_processing.normalize) -}}
   {{- $_ := set $spec.config.processors "transform/metric_labels" (deepCopy $root.Values.metrics_processing.labels) -}}
+  {{- /* Traversing datapoints prunes empty metrics while retaining valid zero values. */ -}}
+  {{- $_ := set $spec.config.processors "filter/empty_metrics" (dict "error_mode" "propagate" "metrics" (dict "metric" (list "type == METRIC_DATA_TYPE_NONE") "datapoint" (list "false"))) -}}
+  {{- $_ := set $spec.config.service.pipelines.metrics "processors" (append $spec.config.service.pipelines.metrics.processors "filter/empty_metrics") -}}
   {{- $tracePipe := $spec.config.service.pipelines.traces -}}
   {{- $_ := set $tracePipe "processors" (list "memory_limiter" "k8s_attributes" "resource/cluster" "transform/trace_resource" "attributes/redact") -}}
   {{- if $root.Values.trace_processing.drop_noise -}}
@@ -216,7 +219,12 @@
 {{- range $id, $exporter := $spec.config.exporters -}}
   {{- if and (hasKey $exporter "sending_queue") $exporter.sending_queue.enabled -}}
     {{- $_ := set $exporter.sending_queue "queue_size" (mul (int $root.Values.exporter_queue_mib) 1048576) -}}
-    {{- $_ := set $exporter.sending_queue "batch" (dict "sizer" "bytes" "flush_timeout" "200ms" "min_size" 8192 "max_size" (mul (int $root.Values.exporter_batch_max_kib) 1024)) -}}
+    {{- if and (eq $name "otel-gateway") (eq $id "otlp_http/metrics") -}}
+      {{- /* Byte splitting can recreate empty metrics after the filter. */ -}}
+      {{- $_ := unset $exporter.sending_queue "batch" -}}
+    {{- else -}}
+      {{- $_ := set $exporter.sending_queue "batch" (dict "sizer" "bytes" "flush_timeout" "200ms" "min_size" 8192 "max_size" (mul (int $root.Values.exporter_batch_max_kib) 1024)) -}}
+    {{- end -}}
   {{- end -}}
   {{- if eq $id "kafka" -}}
     {{- $_ := set $exporter "brokers" $root.Values.kafka_brokers -}}

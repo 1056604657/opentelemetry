@@ -334,7 +334,7 @@
           storage: file_storage
           max_log_size: 256KiB
           max_concurrent_files: 64
-          max_batches: 1
+          max_batches: 0
           retry_on_failure:
             enabled: true
             max_elapsed_time: 0s

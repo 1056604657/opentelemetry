@@ -588,8 +588,10 @@ aws_sigv4:
 # 6405 traces/s 健康（保留率与策略精确一致，sampler 内存 852Mi/4096Mi）。
 # decision_cache 同数量级；内存估算约 1.5KB x 5 spans x 待决数，200k 上限约需 1.5GiB/副本。
 # 本默认值与 values-telemetry.yaml 保持一致；生效值始终以 -f values-telemetry.yaml 为准。
+# 0.7.6 默认等待 60s；4000 x 60 / 2 x 1.5 = 180000，现有 200000 条/副本满足数量预算。
+# 上述历史吞吐验证使用 30s；60s 的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
 tail_sampling:
-  decision_wait: 30s
+  decision_wait: 60s
   num_traces: 200000
   expected_new_traces_per_sec: 0
   maximum_trace_size_bytes: 5242880
