@@ -4,4 +4,4 @@ description: OpenTelemetry collectors and native instrumentation, reconciled by 
   official Operator
 name: otel-platform
 type: application
-version: 0.7.6
+version: 0.7.8

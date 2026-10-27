@@ -1,8 +1,9 @@
 cluster_name: REPLACE_ME
 environment: production
-storage_class: REPLACE_ME
-# false uses memory exporter queues; node log checkpoints still use their own hostPath.
-persistent_queue: true
+storage_class: ''
+# false: all Collectors use no PVC; OTLP/Kafka queues use memory and Node log checkpoints keep hostPath.
+# true: persist exporter queues; set storage_class before a fresh install.
+persistent_queue: false
 collector_image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.163.2
 gateway_topology: unified
 gateway_replicas: 2

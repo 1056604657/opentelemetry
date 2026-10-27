@@ -1,29 +1,85 @@
-# 每个集群复制一份 values-<cluster>.local.yaml；真实凭据不要提交。
-# 必填且跨集群唯一，例如 prod-shanghai-01；安装后保持稳定。
+# 每个集群复制一份 values-<cluster>.local.yaml，填写后与 values-telemetry.yaml 一起加载。
+# 本文件只放集群差异；三信号处理规则放 values-telemetry.yaml，Operator 配置放 values-operator.yaml。
+# 真实 token、密码和证书不要提交到 Git。
+
+# 1. 集群身份（必须填写）
 cluster_name: REPLACE_ME
 environment: production
-storage_class: REPLACE_ME
-# 生产默认使用持久发送队列；false 会在进程重启时丢失未发送数据。
-persistent_queue: true
 
-# OTLP HTTP 填 HTTPS base URL，不带 /v1/traces、/v1/logs、/v1/metrics。
-# 如改为 otlp_grpc，endpoint 填 host:port，不带 scheme。
+# 2. 存储开关（所有 Collector 共用）
+# false（默认）：所有 Collector 不创建 PVC；OTLP/Kafka 发送队列放内存。
+# true：发送队列持久化；必须填写 storage_class，pvc_size 为每个 PVC 的容量。
+# 不用 PVC 仍会保留 Node 的 hostPath 日志读取位置；Remote Write 的 WAL 使用临时卷。
+# 内存未满也可能因崩溃、Pod 重建或队列达到容量上限而丢数据。
+# 存量部署切换前先排空队列，并按 02-部署文档的切换步骤重建工作负载。
+persistent_queue: false
+storage_class: ''
+pvc_size: 10Gi
+
+# 3. 后端写入地址（必须替换示例）
+# OTLP HTTP：填写 HTTPS base URL，不带 /v1/traces、/v1/logs、/v1/metrics。
+# OTLP gRPC：protocol 改为 otlp_grpc，endpoint 填 host:port，不带 scheme。
+# Metrics 也支持 prometheus_remote_write，此时 endpoint 填完整 HTTPS write URL。
+# 公有 CA 的后端：backend_ca_file 留空；私有 CA：填 /etc/otel/trust/backend-ca.crt。
 trace_protocol: otlp_http
 trace_endpoint: https://traces.invalid:4318
 log_protocol: otlp_http
 log_endpoint: https://logs.invalid:4318
-# 也支持 prometheus_remote_write；此时填写完整 HTTPS write URL。
 metrics_protocol: otlp_http
 metrics_endpoint: https://metrics.invalid/api/v1/otlp
+backend_ca_file: ''
 
-# 仅 logs_transport=kafka 时填写；direct 不依赖 Kafka。
-# 云 Kafka，预建 topic；日志编码为 OTLP protobuf，消费组保持稳定。
+# 4. 凭据和私有 CA
+# backends 中填写完整 Authorization header，例如 Bearer <token>；后端明确无认证时可留空。
+# trust 中仅填写实际需要的 PEM；使用默认系统/ServiceAccount 信任时留空。
+# Kafka 凭据仅在启用 Kafka 传输后使用。
+credentials:
+  create: true
+  backends:
+    TRACES_AUTHORIZATION: ''
+    LOGS_AUTHORIZATION: ''
+    METRICS_AUTHORIZATION: ''
+  kafka:
+    KAFKA_USERNAME: REPLACE_ME
+    KAFKA_PASSWORD: REPLACE_ME
+  trust:
+    backend-ca.crt: ''
+    kafka-ca.crt: ''
+    kubelet-ca.crt: ''
+
+# 5. kubelet 容器指标的证书和地址
+# 默认使用 ServiceAccount CA 和节点 IP；目标 kubelet 的 CA/SAN 必须实际匹配。
+# 私有 CA：填写 credentials.trust.kubelet-ca.crt，并修改 kubelet_ca_file。
+# 仅 DNS 证书或节点名不可解析的适配，见 01-架构文档“证书适配”；不要关闭证书校验。
+kubelet_ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+kubelet_endpoint: https://${env:OTEL_NODE_IP}:10250
+
+# 6. 拓扑、副本与内存预算
+# unified 共用 Gateway；dual 额外拆出日志 Gateway。Sampler 始终独立执行尾采样。
+# logs_transport: direct 直接转发日志；kafka 才启用下一节的 Kafka 参数。
+# collector_memory_mib 单位 MiB，会联动 Pod limit/request、memory_limiter 和 GOMEMLIMIT。
+# 这些是预算而非 200 服务容量保证；按实际 trace、日志和指标峰值验收。
+gateway_topology: unified
+gateway_replicas: 2
+sampler_replicas: 2
+scraper_replicas: 2
+logs_transport: direct
+collector_memory_mib:
+  sampler: 4096
+  gateway: 4096
+  logs: 2048
+  node: 1024
+  cluster: 1024
+  scraper: 2048
+
+# 7. 可选 Kafka（仅 logs_transport: kafka 时使用）
+# direct 模式无需修改本节；Kafka 模式需预建 topic，并核对 broker、认证和 TLS。
+# kafka_topic/group 留空时按 cluster_name 自动生成；每个集群保持独立且稳定。
+# Kafka 私有 CA 可在 kafka_tls 下添加 ca_file: /etc/otel/trust/kafka-ca.crt。
 kafka_brokers:
   - kafka-0.invalid:9093
   - kafka-1.invalid:9093
   - kafka-2.invalid:9093
-# 空值自动生成 otel.<cluster_name>.logs.v1 / otel.<cluster_name>.log-gateway.v1。
-# 云平台有命名要求时可覆盖；每个集群使用独立 topic、消费组。
 kafka_topic: ''
 kafka_group: ''
 kafka_auth:
@@ -33,61 +89,16 @@ kafka_auth:
     password: ${env:KAFKA_PASSWORD}
 kafka_tls:
   min_version: '1.2'
-  # 私有 CA 时添加 ca_file: /etc/otel/trust/kafka-ca.crt
 
-# 公有 CA 保持空；私有 CA 改成 /etc/otel/trust/backend-ca.crt。
-# 【主流云托管 K8s 三个 CA 都不用填】阿里云 ACK、AWS EKS、百度云 CCE 等托管集群的
-# kubelet 证书由集群 CA 签发，Pod 内 ServiceAccount CA 即集群 CA，
-# kubelet_ca_file 保持默认；后端为公有证书时 backend_ca_file 留空用系统信任库。
-# 仅以下情况才填：后端用私有/自签 CA（找后端团队要）、kubelet 用独立 CA 或证书
-# 只有 DNS SAN（找集群管理员要，决策树见 01-架构文档.md#证书适配）。
-# Serverless/虚拟节点集群（ACK Serverless、EKS Fargate 等）节点对 Pod 不可见，
-# Node 采集整体不适用，先评估架构再安装。
-backend_ca_file: ''
-# 按目标集群 kubelet 的证书 CA/SAN 填写，保持证书校验。
-kubelet_ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-kubelet_endpoint: https://${env:OTEL_NODE_IP}:10250
-
-credentials:
-  create: true
-  backends:
-    TRACES_AUTHORIZATION: ''   # 例如 'Bearer <token>'；后端无鉴权可留空
-    LOGS_AUTHORIZATION: ''
-    METRICS_AUTHORIZATION: ''
-  kafka:
-    KAFKA_USERNAME: REPLACE_ME
-    KAFKA_PASSWORD: REPLACE_ME
-  # 云托管集群（ACK/EKS/CCE）默认三个全部留空，见上方 CA 说明。
-  trust:
-    backend-ca.crt: ''         # 私有 CA 时填写 PEM，可使用 YAML 的 | 多行格式
-    kafka-ca.crt: ''
-    kubelet-ca.crt: ''
-
-# 以下可先保留默认。unified=共享三信号；dual=trace+metrics / logs 两组。
-gateway_topology: unified
-gateway_replicas: 2
-scraper_replicas: 2
-pvc_size: 10Gi
-# SDK 全量上报；采样策略在 tail_sampling，由独立采样器执行。
-sampler_replicas: 2
-logs_transport: direct
-# Pod 内存上限 MiB；自动联动 memory_limiter、GOMEMLIMIT 和 request。
-collector_memory_mib:
-  sampler: 4096              # 尾采样待决数据在内存；须按全量 trace 速率验收
-  gateway: 2048
-  logs: 2048                 # 仅 dual 生效
-  node: 1024
-  cluster: 1024
-  scraper: 2048
-
-# 三信号处理配置在 values-telemetry.yaml；按需覆盖 log_processing / trace_processing / metrics_processing；通常只改地址、认证和集群身份。
-# 其余参数保持 chart 默认即可；可按需追加，详见部署文档：
-# exporter_queue_mib: 256    # OTLP/Kafka 的持久发送队列，每 exporter
-# exporter_batch_max_kib: 512  # 持久队列发送分批上限，200ms 刷新
-# otlp_max_recv_mib: 4       # Gateway 单次 OTLP 请求上限
-# filelog_start_at: beginning  # 默认保留新容器启动日志；已有 checkpoint 优先
+# 可选覆盖：按需添加，不需要的参数保持 Chart 默认即可。
+# exporter_queue_mib: 256       # 每个 OTLP/Kafka exporter 的队列容量，单位 MiB；不是整个 Pod 内存
+# exporter_batch_max_kib: 512   # 队列发送批次上限，单位 KiB；通常 200ms 刷新
+# otlp_max_recv_mib: 4          # Gateway 单次 OTLP 请求上限，单位 MiB
+# Node 自动读取活动日志及未压缩轮转文件，排除 .gz/.tmp；无需手填 include/exclude。
+# 升级扩大匹配范围可能补读历史并产生重复，操作前查看 02-部署文档的日志升级说明。
+# filelog_start_at: beginning   # 保留新容器启动日志；已有 checkpoint 优先
 # filelog_max_log_size: 256KiB
-# kafka_metrics: {enabled: true}  # 云 Kafka 允许 Describe/offset 查询时启用积压指标
-# rollout_revision: '1'     # 使用外部 Secret 时，轮换凭据后改此值触发滚动
-
-# 如限制采集namespace，log_namespaces和otlp_namespace_selector都应包含接入服务所在namespace。
+# kafka_metrics: {enabled: true} # 仅 Kafka 模式，且账号允许查询积压时启用
+# rollout_revision: '1'        # 外部 Secret 轮换后修改，触发 Collector 滚动
+# 限制 namespace 时，log_namespaces 和 otlp_namespace_selector 都要包含接入服务。
+# 其他参数和存量部署切换步骤见 01-架构文档与 02-部署文档。

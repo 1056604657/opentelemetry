@@ -1,6 +1,12 @@
+# OpenTelemetry Operator：只管理控制器、Webhook 和注入能力。
+# Collector 的 PVC 开关位于 values-platform.yaml，本文件无需配置存储。
+
+# 1. 控制器副本和维护保护
 replicaCount: 1
 pdb:
   create: false
+
+# 2. 固定镜像版本、资源和自监控
 manager:
   image:
     repository: ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator
@@ -11,6 +17,7 @@ manager:
   targetAllocatorImage:
     repository: ghcr.io/open-telemetry/opentelemetry-operator/target-allocator
     tag: 0.161.0
+  # 当前禁用 Go 自动注入；Java/Python/Node.js 探针配置由平台 Instrumentation 提供。
   autoInstrumentation:
     go:
       enabled: false
@@ -21,12 +28,17 @@ manager:
     limits:
       cpu: '1'
       memory: 512Mi
+  # 自监控通过 HTTPS 提供，使用 Webhook 服务证书。
   extraArgs:
-  - --metrics-tls-cert-file=/tmp/k8s-webhook-server/serving-certs/tls.crt
-  - --metrics-tls-key-file=/tmp/k8s-webhook-server/serving-certs/tls.key
+    - --metrics-tls-cert-file=/tmp/k8s-webhook-server/serving-certs/tls.crt
+    - --metrics-tls-key-file=/tmp/k8s-webhook-server/serving-certs/tls.key
   extraEnvs:
-  - name: GOMEMLIMIT
-    value: 384MiB
+    - name: GOMEMLIMIT
+      value: 384MiB
+
+# 3. 注入失败策略和 Webhook 证书
+# Ignore 允许 Webhook 故障时业务 Pod 继续启动，验收时必须确认探针实际注入。
+# 自动签发证书无需 cert-manager；到期前按架构文档轮换。
 admissionWebhooks:
   pods:
     failurePolicy: Ignore
@@ -36,12 +48,14 @@ admissionWebhooks:
     enabled: true
     recreate: false
     certPeriodDays: 365
+
+# 4. 调度偏好（多副本时尽量分散到不同节点）
 affinity:
   podAntiAffinity:
     preferredDuringSchedulingIgnoredDuringExecution:
-    - weight: 100
-      podAffinityTerm:
-        topologyKey: kubernetes.io/hostname
-        labelSelector:
-          matchLabels:
-            app.kubernetes.io/name: opentelemetry-operator
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: opentelemetry-operator

@@ -1,22 +1,22 @@
-# 三信号实际处理配置；Helm 安装通过 -f values-telemetry.yaml 加载。
-# 各集群差异只覆盖自己的 values-<cluster>.local.yaml；列表覆盖时需保留整份列表。
-# Logs: 容器解析 → 按来源可选堆栈合并 → API 元数据 → opt-in → 归一化 → Kafka。
-# Traces: 内存限制 → API 元数据 → 集群/自定义资源 → 可选降噪 → 归一化/脱敏 → 后端。
-# Metrics: host/kubelet/cluster/Prometheus/SDK → Gateway 白名单标签 → 后端。
-# memory_limiter、GOMEMLIMIT、持久队列、后端及实际 pipeline 由 chart 联动生成。
-# cloud.provider/cloud.region 等可在本集群 resource_attributes map 中设置，不使用公司私有字段。
-# 附加资源属性：所有信号统一应用；cluster/environment 仍由平台必填参数决定。
+# 三信号处理规则：通常不按集群修改；集群差异放 values-<cluster>.local.yaml。
+# 安装顺序：先加载本文件，再加载集群 values；列表覆盖时必须保留完整规则。
+# PVC/内存发送队列由 values-platform.yaml 的 persistent_queue 控制。
+# 本文件不配置后端地址、凭据或 Operator；这些由另两个根目录 YAML 管理。
+# 默认链路：文件日志经 Node/Gateway；应用 trace 经 Gateway/Sampler；各类 metrics 经 Gateway。
+# 处理顺序、限制及按需开启项见 01-架构文档。
+
+# 1. 附加资源属性（所有信号统一应用）
+# cloud.provider/cloud.region 等按实际填写；集群和环境身份由平台参数决定。
 resource_attributes: {}
 
-# 日志导出并发与攒批（0.7.5 新增，采用 chart 默认 4/8192/1s）。
-# new-dev 实测证据见 04-压测报告.md 第九节：后端（nginx→logs-ingest→ES）并行约 4、
-# 单请求延迟 ≈1.05ms/条，总吞吐上限 ~3.8k 条/s；8192/4=3,877、8192/8=3,553、16384/4=3,892 条/s，
-# 加并发/加批量均无法突破后端上限、只增延迟，故保持默认值。
-# 修复前（无攒批+单消费者）全链仅 ~95 条/s；全链零日志丢失，过载背压至 node collector。
+# 2. 日志出口批处理
+# 并发 4、每批 8192 条、1s 刷新；修改前核对后端吞吐与 Collector 内存。
+# 历史吞吐记录见架构文档“版本验证”；目标后端仍须按真实峰值验收。
 log_export_consumers: 4
 log_batch_size: 8192
 log_batch_timeout: 1s
 
+# 3. Trace 归一化、脱敏与可选降噪
 # 默认保留采样后的 spans；drop_noise=true 才启用下方精确路由降噪。
 # 只过滤非错误的 SERVER 健康检查 span，可能造成 trace 缺段；不按任意 URL/静态后缀全局丢弃。
 # SDK always_on；独立采样器按 traceID 聚合，策略见下方 tail_sampling。
@@ -26,9 +26,12 @@ trace_processing:
     error_mode: ignore
     traces:
       span:
-      - kind == SPAN_KIND_SERVER and status.code != STATUS_CODE_ERROR and (attributes["http.response.status_code"] == nil or attributes["http.response.status_code"]
-        < 400) and (attributes["http.status_code"] == nil or attributes["http.status_code"] < 400) and (attributes["http.route"] == "/health" or attributes["http.route"]
-        == "/healthz" or attributes["http.route"] == "/readyz" or attributes["http.route"] == "/livez" or attributes["http.route"] == "/actuator/health")
+      - >-
+        kind == SPAN_KIND_SERVER and status.code != STATUS_CODE_ERROR and (attributes["http.response.status_code"]
+        == nil or attributes["http.response.status_code"] < 400) and (attributes["http.status_code"] == nil or
+        attributes["http.status_code"] < 400) and (attributes["http.route"] == "/health" or
+        attributes["http.route"] == "/healthz" or attributes["http.route"] == "/readyz" or
+        attributes["http.route"] == "/livez" or attributes["http.route"] == "/actuator/health")
   redact:
     actions:
     - key: http.request.header.authorization
@@ -59,12 +62,15 @@ trace_processing:
     trace_statements:
     - context: resource
       statements:
-      - set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where resource.attributes["service.namespace"] == nil and resource.attributes["k8s.namespace.name"]
-        != nil
-      - set(resource.attributes["service.name"], resource.attributes["k8s.deployment.name"]) where resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"]
-        != nil
+      - >-
+        set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where
+        resource.attributes["service.namespace"] == nil and resource.attributes["k8s.namespace.name"] != nil
+      - >-
+        set(resource.attributes["service.name"], resource.attributes["k8s.deployment.name"]) where
+        resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"] != nil
       - delete_matching_keys(resource.attributes, "^obs[.](pod|namespace)[.]")
 
+# 4. Metrics 来源与标签
 # 接收器与输出标签的实际配置。节点 usage 和集群 request/limit 配合查询。
 # 不复制全部 resource 为 Prometheus labels；不要删除指标自身实例/维度。
 metrics_processing:
@@ -155,56 +161,64 @@ metrics_processing:
     metric_statements:
     - context: resource
       statements:
-      - set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"])
-        where resource.attributes["service.namespace"] == nil and resource.attributes["k8s.namespace.name"]
-        != nil
-      - set(resource.attributes["service.name"], resource.attributes["k8s.deployment.name"])
-        where resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"]
-        != nil
+      - >-
+        set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where
+        resource.attributes["service.namespace"] == nil and resource.attributes["k8s.namespace.name"] != nil
+      - >-
+        set(resource.attributes["service.name"], resource.attributes["k8s.deployment.name"]) where
+        resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"] != nil
       - delete_matching_keys(resource.attributes, "^obs[.](pod|namespace)[.]")
     - context: datapoint
       statements:
-      - set(attributes["k8s_cluster_name"], resource.attributes["k8s.cluster.name"])
-        where resource.attributes["k8s.cluster.name"] != nil and attributes["k8s_cluster_name"]
-        == nil
-      - set(attributes["deployment_environment_name"], resource.attributes["deployment.environment.name"])
-        where resource.attributes["deployment.environment.name"] != nil and attributes["deployment_environment_name"]
-        == nil
-      - set(attributes["k8s_namespace_name"], resource.attributes["k8s.namespace.name"])
-        where resource.attributes["k8s.namespace.name"] != nil and attributes["k8s_namespace_name"]
-        == nil
-      - set(attributes["k8s_pod_name"], resource.attributes["k8s.pod.name"]) where resource.attributes["k8s.pod.name"]
-        != nil and attributes["k8s_pod_name"] == nil
-      - set(attributes["k8s_node_name"], resource.attributes["k8s.node.name"]) where
-        resource.attributes["k8s.node.name"] != nil and attributes["k8s_node_name"]
-        == nil
-      - set(attributes["service_name"], resource.attributes["service.name"]) where resource.attributes["service.name"]
-        != nil and attributes["service_name"] == nil
-      - set(attributes["service_namespace"], resource.attributes["service.namespace"])
-        where resource.attributes["service.namespace"] != nil and attributes["service_namespace"]
-        == nil
-      - set(attributes["k8s_container_name"], resource.attributes["k8s.container.name"])
-        where resource.attributes["k8s.container.name"] != nil and attributes["k8s_container_name"]
-        == nil
-      - set(attributes["k8s_volume_name"], resource.attributes["k8s.volume.name"]) where
-        resource.attributes["k8s.volume.name"] != nil and attributes["k8s_volume_name"]
-        == nil
-      - set(attributes["k8s_daemonset_name"], resource.attributes["k8s.daemonset.name"])
-        where resource.attributes["k8s.daemonset.name"] != nil and attributes["k8s_daemonset_name"]
-        == nil
-      - set(attributes["k8s_statefulset_name"], resource.attributes["k8s.statefulset.name"])
-        where resource.attributes["k8s.statefulset.name"] != nil and attributes["k8s_statefulset_name"]
-        == nil
-      - set(attributes["k8s_replicaset_name"], resource.attributes["k8s.replicaset.name"])
-        where resource.attributes["k8s.replicaset.name"] != nil and attributes["k8s_replicaset_name"]
-        == nil
-      - set(attributes["k8s_job_name"], resource.attributes["k8s.job.name"]) where resource.attributes["k8s.job.name"]
-        != nil and attributes["k8s_job_name"] == nil
-      - set(attributes["k8s_cronjob_name"], resource.attributes["k8s.cronjob.name"])
-        where resource.attributes["k8s.cronjob.name"] != nil and attributes["k8s_cronjob_name"]
-        == nil
-      - set(attributes["k8s_hpa_name"], resource.attributes["k8s.hpa.name"]) where resource.attributes["k8s.hpa.name"]
-        != nil and attributes["k8s_hpa_name"] == nil
+      - >-
+        set(attributes["k8s_cluster_name"], resource.attributes["k8s.cluster.name"]) where
+        resource.attributes["k8s.cluster.name"] != nil and attributes["k8s_cluster_name"] == nil
+      - >-
+        set(attributes["deployment_environment_name"], resource.attributes["deployment.environment.name"]) where
+        resource.attributes["deployment.environment.name"] != nil and attributes["deployment_environment_name"] ==
+        nil
+      - >-
+        set(attributes["k8s_namespace_name"], resource.attributes["k8s.namespace.name"]) where
+        resource.attributes["k8s.namespace.name"] != nil and attributes["k8s_namespace_name"] == nil
+      - >-
+        set(attributes["k8s_pod_name"], resource.attributes["k8s.pod.name"]) where
+        resource.attributes["k8s.pod.name"] != nil and attributes["k8s_pod_name"] == nil
+      - >-
+        set(attributes["k8s_node_name"], resource.attributes["k8s.node.name"]) where
+        resource.attributes["k8s.node.name"] != nil and attributes["k8s_node_name"] == nil
+      - >-
+        set(attributes["service_name"], resource.attributes["service.name"]) where
+        resource.attributes["service.name"] != nil and attributes["service_name"] == nil
+      - >-
+        set(attributes["service_namespace"], resource.attributes["service.namespace"]) where
+        resource.attributes["service.namespace"] != nil and attributes["service_namespace"] == nil
+      - >-
+        set(attributes["k8s_container_name"], resource.attributes["k8s.container.name"]) where
+        resource.attributes["k8s.container.name"] != nil and attributes["k8s_container_name"] == nil
+      - >-
+        set(attributes["k8s_volume_name"], resource.attributes["k8s.volume.name"]) where
+        resource.attributes["k8s.volume.name"] != nil and attributes["k8s_volume_name"] == nil
+      - >-
+        set(attributes["k8s_daemonset_name"], resource.attributes["k8s.daemonset.name"]) where
+        resource.attributes["k8s.daemonset.name"] != nil and attributes["k8s_daemonset_name"] == nil
+      - >-
+        set(attributes["k8s_statefulset_name"], resource.attributes["k8s.statefulset.name"]) where
+        resource.attributes["k8s.statefulset.name"] != nil and attributes["k8s_statefulset_name"] == nil
+      - >-
+        set(attributes["k8s_replicaset_name"], resource.attributes["k8s.replicaset.name"]) where
+        resource.attributes["k8s.replicaset.name"] != nil and attributes["k8s_replicaset_name"] == nil
+      - >-
+        set(attributes["k8s_job_name"], resource.attributes["k8s.job.name"]) where
+        resource.attributes["k8s.job.name"] != nil and attributes["k8s_job_name"] == nil
+      - >-
+        set(attributes["k8s_cronjob_name"], resource.attributes["k8s.cronjob.name"]) where
+        resource.attributes["k8s.cronjob.name"] != nil and attributes["k8s_cronjob_name"] == nil
+      - >-
+        set(attributes["k8s_hpa_name"], resource.attributes["k8s.hpa.name"]) where
+        resource.attributes["k8s.hpa.name"] != nil and attributes["k8s_hpa_name"] == nil
+# 5. 文件日志解析、业务关联与归一化
+# 活动/未压缩轮转文件的匹配及 .gz/.tmp 排除由 Chart 统一生成，不在这里配置。
+# 默认不合并应用多行堆栈；按真实日志格式配置 recombine。
 log_processing:
   filelog:
     container:
@@ -324,42 +338,100 @@ log_processing:
       statements:
       - set(cache["json"], body) where IsMap(body)
       - set(cache["json"], ParseJSON(body)) where IsString(body) and IsMatch(body, "^[[:space:]]*[{]")
-      - set(cache["trace"], cache["json"]["trace_id"]) where cache["trace"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["trace_id"])
-      - set(cache["trace"], cache["json"]["traceId"]) where cache["trace"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["traceId"])
-      - set(cache["trace"], cache["json"]["otelTraceID"]) where cache["trace"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["otelTraceID"])
-      - set(cache["trace"], cache["json"]["trace.id"]) where cache["trace"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["trace.id"])
-      - set(cache["trace"], cache["json"]["trace"]["id"]) where cache["trace"] == nil and IsMap(cache["json"]) and IsMap(cache["json"]["trace"]) and IsString(cache["json"]["trace"]["id"])
-      - set(cache["span"], cache["json"]["span_id"]) where cache["span"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["span_id"])
-      - set(cache["span"], cache["json"]["spanId"]) where cache["span"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["spanId"])
-      - set(cache["span"], cache["json"]["otelSpanID"]) where cache["span"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["otelSpanID"])
-      - set(cache["span"], cache["json"]["span.id"]) where cache["span"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["span.id"])
-      - set(cache["span"], cache["json"]["span"]["id"]) where cache["span"] == nil and IsMap(cache["json"]) and IsMap(cache["json"]["span"]) and IsString(cache["json"]["span"]["id"])
-      - set(cache["text_trace"], ExtractPatterns(body, "(?i)(?:^|[[:space:],;\\[])(?:trace_id|traceId|otelTraceID)[[:space:]]*[=:][[:space:]\"\\x27]*(?P<trace_id>[0-9a-f]{32})(?:$|[^0-9a-f])"))
+      - >-
+        set(cache["trace"], cache["json"]["trace_id"]) where cache["trace"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["trace_id"])
+      - >-
+        set(cache["trace"], cache["json"]["traceId"]) where cache["trace"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["traceId"])
+      - >-
+        set(cache["trace"], cache["json"]["otelTraceID"]) where cache["trace"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["otelTraceID"])
+      - >-
+        set(cache["trace"], cache["json"]["trace.id"]) where cache["trace"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["trace.id"])
+      - >-
+        set(cache["trace"], cache["json"]["trace"]["id"]) where cache["trace"] == nil and IsMap(cache["json"]) and
+        IsMap(cache["json"]["trace"]) and IsString(cache["json"]["trace"]["id"])
+      - >-
+        set(cache["span"], cache["json"]["span_id"]) where cache["span"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["span_id"])
+      - >-
+        set(cache["span"], cache["json"]["spanId"]) where cache["span"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["spanId"])
+      - >-
+        set(cache["span"], cache["json"]["otelSpanID"]) where cache["span"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["otelSpanID"])
+      - >-
+        set(cache["span"], cache["json"]["span.id"]) where cache["span"] == nil and IsMap(cache["json"]) and
+        IsString(cache["json"]["span.id"])
+      - >-
+        set(cache["span"], cache["json"]["span"]["id"]) where cache["span"] == nil and IsMap(cache["json"]) and
+        IsMap(cache["json"]["span"]) and IsString(cache["json"]["span"]["id"])
+      - >-
+        set(cache["text_trace"], ExtractPatterns(body,
+        "(?i)(?:^|[[:space:],;\\[])(?:trace_id|traceId|otelTraceID)[[:space:]]*[=:][[:space:]\"\\x27]*(?P<trace_id>[0-9a-f]{32})(?:$|[^0-9a-f])"))
         where IsString(body) and not IsMap(cache["json"])
-      - set(cache["text_span"], ExtractPatterns(body, "(?i)(?:^|[[:space:],;\\[])(?:span_id|spanId|otelSpanID)[[:space:]]*[=:][[:space:]\"\\x27]*(?P<span_id>[0-9a-f]{16})(?:$|[^0-9a-f])"))
+      - >-
+        set(cache["text_span"], ExtractPatterns(body,
+        "(?i)(?:^|[[:space:],;\\[])(?:span_id|spanId|otelSpanID)[[:space:]]*[=:][[:space:]\"\\x27]*(?P<span_id>[0-9a-f]{16})(?:$|[^0-9a-f])"))
         where IsString(body) and not IsMap(cache["json"])
-      - set(cache["traceparent"], ExtractPatterns(body, "(?i)(?:^|[[:space:],;\\[])traceparent[[:space:]]*[=:][[:space:]\"\\x27]*00-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-[0-9a-f]{2}(?:$|[^0-9a-f-])"))
+      - >-
+        set(cache["traceparent"], ExtractPatterns(body,
+        "(?i)(?:^|[[:space:],;\\[])traceparent[[:space:]]*[=:][[:space:]\"\\x27]*00-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-[0-9a-f]{2}(?:$|[^0-9a-f-])"))
         where IsString(body) and not IsMap(cache["json"])
-      - set(cache["bracket"], ExtractPatterns(body, "\\[(?P<trace_id>[0-9a-fA-F]{32})[[:space:]]*,[[:space:]]*(?P<span_id>[0-9a-fA-F]{16})\\]")) where IsString(body)
-        and not IsMap(cache["json"])
-      - set(cache["trace"], cache["bracket"]["trace_id"]) where cache["trace"] == nil and IsMap(cache["bracket"]) and IsString(cache["bracket"]["trace_id"])
-      - set(cache["span"], cache["bracket"]["span_id"]) where cache["span"] == nil and IsMap(cache["bracket"]) and IsString(cache["bracket"]["span_id"])
-      - set(cache["trace"], cache["text_trace"]["trace_id"]) where cache["trace"] == nil and IsMap(cache["text_trace"]) and IsString(cache["text_trace"]["trace_id"])
-      - set(cache["trace"], cache["traceparent"]["trace_id"]) where cache["trace"] == nil and IsMap(cache["traceparent"]) and IsString(cache["traceparent"]["trace_id"])
-      - set(cache["span"], cache["text_span"]["span_id"]) where cache["span"] == nil and IsMap(cache["text_span"]) and IsString(cache["text_span"]["span_id"])
-      - set(cache["span"], cache["traceparent"]["span_id"]) where cache["span"] == nil and IsMap(cache["traceparent"]) and IsString(cache["traceparent"]["span_id"])
-      - set(trace_id, TraceID(cache["trace"])) where IsString(cache["trace"]) and IsMatch(cache["trace"], "^[0-9a-fA-F]{32}$") and not IsMatch(cache["trace"], "^0+$")
-      - set(span_id, SpanID(cache["span"])) where IsString(cache["span"]) and IsMatch(cache["span"], "^[0-9a-fA-F]{16}$") and not IsMatch(cache["span"], "^0+$")
-      - set(cache["header"], ExtractPatterns(body, "^[[]?(?P<time>[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.,][0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})?)[\\]]?[[:space:]]*(?:[-|][[:space:]]*)?(?P<level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\\b"))
+      - >-
+        set(cache["bracket"], ExtractPatterns(body,
+        "\\[(?P<trace_id>[0-9a-fA-F]{32})[[:space:]]*,[[:space:]]*(?P<span_id>[0-9a-fA-F]{16})\\]")) where
+        IsString(body) and not IsMap(cache["json"])
+      - >-
+        set(cache["trace"], cache["bracket"]["trace_id"]) where cache["trace"] == nil and IsMap(cache["bracket"])
+        and IsString(cache["bracket"]["trace_id"])
+      - >-
+        set(cache["span"], cache["bracket"]["span_id"]) where cache["span"] == nil and IsMap(cache["bracket"]) and
+        IsString(cache["bracket"]["span_id"])
+      - >-
+        set(cache["trace"], cache["text_trace"]["trace_id"]) where cache["trace"] == nil and
+        IsMap(cache["text_trace"]) and IsString(cache["text_trace"]["trace_id"])
+      - >-
+        set(cache["trace"], cache["traceparent"]["trace_id"]) where cache["trace"] == nil and
+        IsMap(cache["traceparent"]) and IsString(cache["traceparent"]["trace_id"])
+      - >-
+        set(cache["span"], cache["text_span"]["span_id"]) where cache["span"] == nil and IsMap(cache["text_span"])
+        and IsString(cache["text_span"]["span_id"])
+      - >-
+        set(cache["span"], cache["traceparent"]["span_id"]) where cache["span"] == nil and
+        IsMap(cache["traceparent"]) and IsString(cache["traceparent"]["span_id"])
+      - >-
+        set(trace_id, TraceID(cache["trace"])) where IsString(cache["trace"]) and IsMatch(cache["trace"],
+        "^[0-9a-fA-F]{32}$") and not IsMatch(cache["trace"], "^0+$")
+      - >-
+        set(span_id, SpanID(cache["span"])) where IsString(cache["span"]) and IsMatch(cache["span"],
+        "^[0-9a-fA-F]{16}$") and not IsMatch(cache["span"], "^0+$")
+      - >-
+        set(cache["header"], ExtractPatterns(body,
+        "^[[]?(?P<time>[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.,][0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})?)[\\]]?[[:space:]]*(?:[-|][[:space:]]*)?(?P<level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\\b"))
         where IsString(body) and not IsMap(cache["json"])
       - set(severity_text, cache["header"]["level"]) where IsMap(cache["header"]) and IsString(cache["header"]["level"])
-      - set(cache["application_time"], cache["json"]["timestamp"]) where IsMap(cache["json"]) and IsString(cache["json"]["timestamp"])
-      - set(cache["application_time"], cache["json"]["@timestamp"]) where cache["application_time"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["@timestamp"])
-      - set(cache["application_time"], cache["json"]["time"]) where cache["application_time"] == nil and IsMap(cache["json"]) and IsString(cache["json"]["time"])
-      - set(time, Time(cache["application_time"], "%Y-%m-%dT%H:%M:%S.%sZ")) where IsString(cache["application_time"]) and IsMatch(cache["application_time"], "Z$")
-      - set(time, Time(cache["application_time"], "%Y-%m-%dT%H:%M:%S.%s%j")) where IsString(cache["application_time"]) and IsMatch(cache["application_time"], "[+-][0-9]{2}:[0-9]{2}$")
+      - >-
+        set(cache["application_time"], cache["json"]["timestamp"]) where IsMap(cache["json"]) and
+        IsString(cache["json"]["timestamp"])
+      - >-
+        set(cache["application_time"], cache["json"]["@timestamp"]) where cache["application_time"] == nil and
+        IsMap(cache["json"]) and IsString(cache["json"]["@timestamp"])
+      - >-
+        set(cache["application_time"], cache["json"]["time"]) where cache["application_time"] == nil and
+        IsMap(cache["json"]) and IsString(cache["json"]["time"])
+      - >-
+        set(time, Time(cache["application_time"], "%Y-%m-%dT%H:%M:%S.%sZ")) where
+        IsString(cache["application_time"]) and IsMatch(cache["application_time"], "Z$")
+      - >-
+        set(time, Time(cache["application_time"], "%Y-%m-%dT%H:%M:%S.%s%j")) where
+        IsString(cache["application_time"]) and IsMatch(cache["application_time"], "[+-][0-9]{2}:[0-9]{2}$")
       - set(severity_text, cache["json"]["level"]) where IsMap(cache["json"]) and IsString(cache["json"]["level"])
-      - set(severity_text, cache["json"]["levelname"]) where severity_text == "" and IsMap(cache["json"]) and IsString(cache["json"]["levelname"])
+      - >-
+        set(severity_text, cache["json"]["levelname"]) where severity_text == "" and IsMap(cache["json"]) and
+        IsString(cache["json"]["levelname"])
       - set(severity_text, ToUpperCase(severity_text)) where severity_text != ""
       - set(severity_number, 1) where severity_text == "TRACE"
       - set(severity_number, 5) where severity_text == "DEBUG"
@@ -369,34 +441,52 @@ log_processing:
       - set(severity_number, 17) where severity_text == "ERROR"
       - set(severity_number, 21) where severity_text == "FATAL"
       - set(severity_number, 21) where severity_text == "CRITICAL"
-      - set(severity_number, 1) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 10
-      - set(severity_text, "TRACE") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"]
-        == 10
-      - set(severity_number, 5) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 20
-      - set(severity_text, "DEBUG") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"]
-        == 20
-      - set(severity_number, 9) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 30
-      - set(severity_text, "INFO") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] ==
-        30
-      - set(severity_number, 13) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] ==
-        40
-      - set(severity_text, "WARN") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] ==
-        40
-      - set(severity_number, 17) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] ==
-        50
-      - set(severity_text, "ERROR") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"]
-        == 50
-      - set(severity_number, 21) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"] ==
-        60
-      - set(severity_text, "FATAL") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or IsDouble(cache["json"]["level"])) and cache["json"]["level"]
-        == 60
+      - >-
+        set(severity_number, 1) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 10
+      - >-
+        set(severity_text, "TRACE") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 10
+      - >-
+        set(severity_number, 5) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 20
+      - >-
+        set(severity_text, "DEBUG") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 20
+      - >-
+        set(severity_number, 9) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 30
+      - >-
+        set(severity_text, "INFO") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 30
+      - >-
+        set(severity_number, 13) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 40
+      - >-
+        set(severity_text, "WARN") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 40
+      - >-
+        set(severity_number, 17) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 50
+      - >-
+        set(severity_text, "ERROR") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 50
+      - >-
+        set(severity_number, 21) where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 60
+      - >-
+        set(severity_text, "FATAL") where IsMap(cache["json"]) and (IsInt(cache["json"]["level"]) or
+        IsDouble(cache["json"]["level"])) and cache["json"]["level"] == 60
       - delete_key(cache["json"], "password") where IsMap(cache["json"])
       - delete_key(cache["json"], "authorization") where IsMap(cache["json"])
       - delete_key(cache["json"], "cookie") where IsMap(cache["json"])
       - set(body, cache["json"]) where IsMap(cache["json"])
-      - set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where resource.attributes["k8s.namespace.name"] != nil
-      - set(resource.attributes["service.name"], resource.attributes["k8s.deployment.name"]) where resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"]
-        != nil
+      - >-
+        set(resource.attributes["service.namespace"], resource.attributes["k8s.namespace.name"]) where
+        resource.attributes["k8s.namespace.name"] != nil
+      - >-
+        set(resource.attributes["service.name"], resource.attributes["k8s.deployment.name"]) where
+        resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"] != nil
       - delete_matching_keys(resource.attributes, "^obs[.](pod|namespace)[.]")
   application_time:
     enabled: false
@@ -404,20 +494,16 @@ log_processing:
     layout: '%Y-%m-%d %H:%M:%S.%L'
 
 
+# 6. 尾采样（ERROR、至少 2 秒的慢请求、约 10% 普通请求）
+# PVC 开关不改变采样规则；待决 trace 和 decision cache 始终在内存。
 # 尾采样：满足任一规则即保留。60s 从首个收到的 span 开始计时。
 # 超大 trace、超窗 span、故障丢失及正常关闭的部分数据决策等边界见架构文档。
 # 上游 latency 使用严格 > 且按毫秒取整；1999 表示保留耗时至少 2000ms。
-#
-# 【2026-10-24 new-dev 压测实测，勿低于此配置】
-# num_traces 是每个 sampler 副本的待决 trace 上限；填满速率为 num_traces/decision_wait，
-# 超过后旧 trace 在决策前被逐出——不是渐变衰减而是断崖：749 traces/s（375/s/副本）时
-# num_traces=10000 实测保留数为 0（errors/slow 全丢，且 refused/队列指标无任何异常，静默故障）。
-# 容量公式：num_traces >= 1.5 x 集群 traces/s x decision_wait / sampler_replicas。
-# 200 微服务按 20 QPS/服务 = 4000 traces/s：4000x30/2x1.5 = 90000；取 200000 后实测
-# 5269 traces/s 健康（保留率与策略精确一致，sampler 内存 739Mi/4096Mi）。
-# decision_cache 同数量级；内存估算约 1.5KB x 5 spans x 待决数，200k 上限约需 1.5GiB/副本。
-# 0.7.6 默认等待 60s；4000 x 60 / 2 x 1.5 = 180000，现有 200000 条/副本满足数量预算。
-# 上述历史吞吐验证使用 30s；60s 的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
+# num_traces 是每个 Sampler 的待决 trace 数量上限，不是 span 数量或内存大小。
+# 数量预算：num_traces >= 1.5 × 集群新 trace/s × decision_wait / sampler_replicas。
+# 例：4000 × 60 / 2 × 1.5 = 180000 条/副本；默认 200000，实际内存/吞吐另行验收。
+# 超容量可能在决定前淘汰 ERROR/慢 trace；单 trace 超过 5MiB 也会被丢弃。
+# 60s 从首个收到的 span 计时，超窗 ERROR 不保证补回；历史压测不代表当前峰值容量。
 tail_sampling:
   decision_wait: 60s
   num_traces: 200000

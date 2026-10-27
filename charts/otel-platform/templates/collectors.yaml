@@ -114,9 +114,13 @@
 {{- if eq $name "otel-node" -}}
   {{- range $volume := $spec.volumes -}}{{- if eq $volume.name "data" -}}{{- $_ := set $volume.hostPath "path" $root.Values.node_state_directory -}}{{- end -}}{{- end -}}
   {{- if $root.Values.log_namespaces -}}
-    {{- $paths := list -}}{{- range $ns := $root.Values.log_namespaces -}}{{- $paths = append $paths (printf "/var/log/pods/%s_*/*/*.log" $ns) -}}{{- end -}}
+    {{- $paths := list -}}
+    {{- range $ns := $root.Values.log_namespaces -}}
+      {{- $paths = append $paths (printf "/var/log/pods/%s_*/*/*.log" $ns) -}}
+      {{- $paths = append $paths (printf "/var/log/pods/%s_*/*/*.log.*" $ns) -}}
+    {{- end -}}
     {{- $_ := set $spec.config.receivers.filelog "include" $paths -}}
-    {{- $_ := unset $spec.config.receivers.filelog "exclude" -}}
+    {{- $_ := set $spec.config.receivers.filelog "exclude" (list "/var/log/pods/*/*/*.gz" "/var/log/pods/*/*/*.tmp") -}}
   {{- end -}}
 {{- end -}}
 {{- $extra := list -}}

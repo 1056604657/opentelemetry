@@ -325,10 +325,14 @@
           fsync: true
       receivers:
         filelog:
+          # 重新发现未压缩轮转文件，补读切换时尚未读取的尾部。
           include:
           - /var/log/pods/*/*/*.log
+          - /var/log/pods/*/*/*.log.*
           exclude:
-          - /var/log/pods/RELEASE_NAMESPACE_*/*/*.log
+          - /var/log/pods/RELEASE_NAMESPACE_*/*/*.log*
+          - /var/log/pods/*/*/*.gz
+          - /var/log/pods/*/*/*.tmp
           include_file_path: true
           start_at: beginning
           storage: file_storage
