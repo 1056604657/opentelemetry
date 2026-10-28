@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenTelemetry · Kubernetes 可观测性三要素</title>
+<style>
+:root{
+  --ink:#1d1d1f; --ink2:#3d3d41; --muted:#86868b; --faint:#a1a1a6;
+  --line:#d6d7dc; --line2:#e8e9ee; --bg:#fbfbfd; --paper:#ffffff;
+  --trace:#0071e3; --trace-soft:#eaf3fe;
+  --metric:#00a37a; --metric-soft:#e7f7f2;
+  --log:#d9760b; --log-soft:#fdf3e6;
+  --sans:-apple-system,"SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue",Helvetica,sans-serif;
+  --serif:"New York",ui-serif,Georgia,"Songti SC",serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --ease:cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:#dfe1e6}
+body{font-family:var(--sans);color:var(--ink);-webkit-font-smoothing:antialiased}
+#stage{position:fixed;inset:0;display:grid;place-items:center}
+#deck{position:relative;width:1600px;height:900px;flex:none;transform-origin:center center;
+  background:var(--bg);overflow:hidden;
+  box-shadow:0 50px 130px -40px rgba(20,22,30,.45),0 0 0 1px rgba(0,0,0,.05)}
+.slide{position:absolute;inset:0;padding:78px 92px 92px;opacity:0;visibility:hidden;pointer-events:none;
+  transform:translateY(10px);transition:opacity .5s var(--ease),transform .8s var(--ease),visibility .5s}
+.slide[data-active]{opacity:1;visibility:visible;pointer-events:auto;transform:none}
+.slide.wide{padding:56px 56px 72px}
+
+.a{opacity:0;transform:translateY(16px)}
+[data-active] .a{animation:rise .9s var(--ease) forwards;animation-delay:var(--d,0s)}
+@keyframes rise{to{opacity:1;transform:none}}
+.a-in{opacity:0}
+[data-active] .a-in{animation:fade .9s ease forwards;animation-delay:var(--d,0s)}
+@keyframes fade{to{opacity:1}}
+.a-scale{opacity:0;transform:scale(.95);transform-origin:center}
+[data-active] .a-scale{animation:pop 1s var(--ease) forwards;animation-delay:var(--d,0s)}
+@keyframes pop{to{opacity:1;transform:scale(1)}}
+.draw{stroke-dasharray:1;stroke-dashoffset:1}
+[data-active] .draw{animation:draw 1.4s var(--ease) forwards;animation-delay:var(--d,.15s)}
+@keyframes draw{to{stroke-dashoffset:0}}
+.grow{transform:scaleX(0);transform-origin:left center}
+[data-active] .grow{animation:grow 1.1s var(--ease) forwards;animation-delay:var(--d,.2s)}
+@keyframes grow{to{transform:scaleX(1)}}
+.blink{animation:blink 2.6s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:.2}50%{opacity:1}}
+.spin-slow{transform-origin:center;animation:spin 52s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin-rev{transform-origin:center;animation:spin 78s linear infinite reverse}
+
+.kicker{font-size:11.5px;font-weight:600;letter-spacing:.24em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:88px;line-height:1.03;font-weight:600;letter-spacing:-.045em}
+h2{font-size:52px;line-height:1.1;font-weight:600;letter-spacing:-.038em}
+h3{font-size:24px;line-height:1.32;font-weight:600;letter-spacing:-.02em}
+.lead{font-size:21px;line-height:1.6;color:var(--ink2);letter-spacing:-.01em}
+.body{font-size:17px;line-height:1.72;color:#55555b}
+.small{font-size:14.5px;line-height:1.65;color:var(--muted)}
+.mono{font-family:var(--mono);letter-spacing:-.01em}
+.num{font-family:var(--serif);font-weight:400;letter-spacing:-.02em}
+
+.chrome{position:absolute;left:0;right:0;bottom:0;height:58px;padding:0 92px;display:flex;align-items:center;
+  justify-content:space-between;font-size:11.5px;letter-spacing:.06em;color:var(--faint);
+  background:linear-gradient(to top,rgba(251,251,253,.97),rgba(251,251,253,0));pointer-events:none}
+.chrome .left{display:flex;align-items:center;gap:14px}
+.chrome .bar{width:200px;height:2px;background:var(--line2);position:relative;overflow:hidden;border-radius:2px}
+.chrome .bar i{position:absolute;inset:0;background:var(--ink);transform-origin:left;transform:scaleX(0);transition:transform .6s var(--ease)}
+.chrome .pg{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--muted)}
+.hint{position:absolute;right:92px;bottom:70px;font-size:11.5px;color:var(--faint);letter-spacing:.04em;transition:opacity .6s}
+
+.cover{padding:0}
+.cover-inner{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:0 104px}
+.cover-art{position:absolute;right:-150px;top:-130px;width:920px;height:920px}
+.cover .meta{display:flex;gap:46px;margin-top:50px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.cover .meta b{display:block;color:var(--ink);font-weight:600;margin-top:6px;font-family:var(--sans);font-size:14px}
+
+.card{background:var(--paper);border:1px solid var(--line2);border-radius:20px;
+  box-shadow:0 1px 2px rgba(16,18,24,.03),0 12px 30px -22px rgba(16,18,24,.2)}
+.tag{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;padding:5px 11px;border-radius:100px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint);padding:0 0 12px;border-bottom:1px solid var(--line)}
+td{padding:13px 0;border-bottom:1px solid var(--line2);font-size:15px;color:var(--ink2);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:500}
+tr:last-child td{border-bottom:0}
+
+.code{background:#1d1d1f;color:#e8e8ed;border-radius:13px;padding:18px 20px;font-family:var(--mono);
+  font-size:11.5px;line-height:1.8;white-space:pre;overflow:hidden;
+  box-shadow:0 20px 46px -30px rgba(0,0,0,.55)}
+.code .c{color:#7d7d85}
+.code .k{color:#7fd1ff}
+.code .s{color:#ffd48a}
+.code .g{color:#8ce99a}
+.pre{white-space:pre-line}
+
+/* ---- 单页截图模式（用于导出 PDF / PPT） ---- */
+body.shot{background:#fbfbfd}
+body.shot #deck{transform:none!important;box-shadow:none}
+body.shot .chrome,body.shot .hint{display:none}
+
+/* ---- 打印 / 导出 PDF ---- */
+@page{size:1600px 900px;margin:0}
+@media print{
+  html,body{overflow:visible;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #stage{position:static;display:block}
+  #deck{transform:none!important;width:1600px;height:auto;box-shadow:none;overflow:visible}
+  .slide{position:relative;inset:auto;width:1600px;height:900px;
+    opacity:1!important;visibility:visible!important;transform:none!important;
+    break-after:page;page-break-after:always;pointer-events:auto}
+  .slide:last-of-type{break-after:auto;page-break-after:auto}
+  .a,.a-in,.a-scale{opacity:1!important;transform:none!important;animation:none!important}
+  .draw{stroke-dashoffset:0!important;animation:none!important}
+  .grow{transform:none!important;animation:none!important}
+  .chrome,.hint{display:none!important}
+}
+</style>
+</head>
+<body>
+<div id="stage">
+<div id="deck">
+
+<!-- ================= 01 COVER ================= -->
+<section class="slide cover" data-sec="封面">
+  <svg class="cover-art" viewBox="0 0 900 900" fill="none">
+    <defs>
+      <radialGradient id="cg1" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#0071e3" stop-opacity=".16"/>
+        <stop offset="58%" stop-color="#0071e3" stop-opacity=".05"/>
+        <stop offset="100%" stop-color="#0071e3" stop-opacity="0"/>
+      </radialGradient>
+      <linearGradient id="cg2" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#0071e3" stop-opacity=".6"/>
+        <stop offset="100%" stop-color="#00a37a" stop-opacity=".2"/>
+      </linearGradient>
+    </defs>
+    <circle cx="450" cy="450" r="440" fill="url(#cg1)"/>
+    <g class="spin-slow" style="transform-origin:450px 450px">
+      <circle cx="450" cy="450" r="336" stroke="url(#cg2)" stroke-width="1.1" stroke-dasharray="2 9"/>
+      <circle cx="450" cy="450" r="272" stroke="#0071e3" stroke-opacity=".18" stroke-width="1"/>
+      <circle cx="450" cy="450" r="210" stroke="#1d1d1f" stroke-opacity=".05" stroke-width="1"/>
+    </g>
+    <g class="spin-rev" style="transform-origin:450px 450px">
+      <circle cx="450" cy="450" r="160" stroke="#00a37a" stroke-opacity=".28" stroke-width="1" stroke-dasharray="1 13"/>
+      <circle cx="650" cy="450" r="5" fill="#0071e3"/>
+      <circle cx="450" cy="246" r="3.5" fill="#00a37a"/>
+      <circle cx="336" cy="564" r="3" fill="#d9760b"/>
+    </g>
+    <circle cx="450" cy="450" r="96" stroke="#1d1d1f" stroke-opacity=".07" stroke-width="1"/>
+    <circle cx="450" cy="450" r="4" fill="#1d1d1f" fill-opacity=".5"/>
+  </svg>
+
+  <div class="cover-inner">
+    <div class="kicker a" style="--d:.05s">Production Observability · OpenTelemetry</div>
+    <h1 class="a" style="--d:.14s;margin-top:32px;max-width:1010px">
+      看清 Kubernetes 里的<br>每一次调用
+    </h1>
+    <p class="lead a" style="--d:.26s;margin-top:32px;max-width:680px;font-size:23px">
+      Trace、Metrics、Logs 三要素，<br>是如何被自动采集、关联并送进后端的。
+    </p>
+    <div class="meta a" style="--d:.4s">
+      <div>平台版本<b>0.7.8</b></div>
+      <div>Collector<b>Contrib 0.163.2</b></div>
+      <div>Operator<b>0.161.0</b></div>
+      <div>探针<b>Java / Python / Node.js</b></div>
+    </div>
+  </div>
+  <div class="hint" id="hint">← → 切换 · 共 15 页</div>
+</section>
+
+<!-- ================= 02 一页看懂 ================= -->
+<section class="slide" data-sec="一页看懂">
+  <div class="kicker a" style="--d:.02s">Executive Summary</div>
+  <h2 class="a" style="--d:.08s;margin-top:20px">三句话说完这套方案</h2>
+
+  <div style="margin-top:52px">
+    <div class="a" style="--d:.18s;display:grid;grid-template-columns:86px 1fr 480px;gap:40px;align-items:start;padding:36px 0;border-top:1px solid var(--line2)">
+      <div class="num" style="font-size:42px;color:#c8c9cf;line-height:1">01</div>
+      <div>
+        <h3>一次接入，三类数据</h3>
+        <p class="body" style="margin-top:10px;max-width:600px">
+          业务只需要加两行 annotation。探针自动注入，Trace / Metrics / Logs 全部走同一个
+          <span class="mono" style="font-size:15px">OTLP</span> 协议汇入，不再为每种信号维护一套 agent。
+        </p>
+      </div>
+      <div style="display:flex;gap:9px;padding-top:4px">
+        <span class="tag" style="background:var(--trace-soft);color:var(--trace)"><span class="dot" style="background:var(--trace)"></span>Trace</span>
+        <span class="tag" style="background:var(--metric-soft);color:var(--metric)"><span class="dot" style="background:var(--metric)"></span>Metrics</span>
+        <span class="tag" style="background:var(--log-soft);color:var(--log)"><span class="dot" style="background:var(--log)"></span>Logs</span>
+      </div>
+    </div>
+
+    <div class="a" style="--d:.3s;display:grid;grid-template-columns:86px 1fr 480px;gap:40px;align-items:start;padding:36px 0;border-top:1px solid var(--line2)">
+      <div class="num" style="font-size:42px;color:#c8c9cf;line-height:1">02</div>
+      <div>
+        <h3>分层采集，各管一段</h3>
+        <p class="body" style="margin-top:10px;max-width:600px">
+          应用侧管链路、节点侧读日志与容器指标、集群侧读对象状态。每一类指标只保留<b>一条</b>采集路径，
+          不与现有 Prometheus / node-exporter 重复采集。
+        </p>
+      </div>
+      <div class="small" style="padding-top:6px;line-height:2">
+        应用 → 探针 / SDK<br>节点 → DaemonSet 读 CRI 日志<br>集群 → k8s_cluster · Events
+      </div>
+    </div>
+
+    <div class="a" style="--d:.42s;display:grid;grid-template-columns:86px 1fr 480px;gap:40px;align-items:start;padding:36px 0;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2)">
+      <div class="num" style="font-size:42px;color:#c8c9cf;line-height:1">03</div>
+      <div>
+        <h3>统一出口，边界清楚</h3>
+        <p class="body" style="margin-top:10px;max-width:600px">
+          Gateway 统一补全 K8s 身份、脱敏、按 traceID 路由；尾采样看完完整链路再决定留或丢。
+          平台不装存储与看板，只负责把数据可靠地交给既有后端。
+        </p>
+      </div>
+      <div class="small" style="padding-top:6px;line-height:2">
+        Gateway ×2 · Sampler ×2 · Scraper ×2<br>Cluster ×1 · Node ×N · Operator ×1
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 03 三要素 ================= -->
+<section class="slide" data-sec="三要素">
+  <div class="kicker a" style="--d:.02s">The Three Pillars</div>
+  <h2 class="a" style="--d:.08s;margin-top:20px">三要素，回答三个不同的问题</h2>
+  <p class="body a" style="--d:.16s;margin-top:16px;max-width:860px">
+    它们不是三套系统，而是同一批请求的三种投影 —— 靠 <span class="mono">trace_id</span> 与 <span class="mono">span_id</span> 互相点得动。
+  </p>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:48px">
+    <!-- TRACE -->
+    <div class="card a" style="--d:.26s;padding:30px 30px 26px">
+      <svg viewBox="0 0 320 138" style="width:100%;height:138px" fill="none">
+        <g font-family="SF Mono,monospace" font-size="9" fill="#a1a1a6">
+          <text x="0" y="18">GET /orders</text>
+          <text x="0" y="46">auth</text>
+          <text x="0" y="74">inventory</text>
+          <text x="0" y="102">jdbc</text>
+          <text x="0" y="130">payment</text>
+        </g>
+        <rect x="86" y="10" width="212" height="11" rx="5.5" fill="#0071e3" fill-opacity=".16"/>
+        <rect x="86" y="10" width="212" height="11" rx="5.5" fill="#0071e3" fill-opacity=".45" class="grow" style="--d:.45s"/>
+        <rect x="88" y="38" width="22" height="11" rx="5.5" fill="#0071e3" class="grow" style="--d:.6s"/>
+        <rect x="96" y="66" width="128" height="11" rx="5.5" fill="#0071e3" fill-opacity=".82" class="grow" style="--d:.72s"/>
+        <rect x="100" y="94" width="120" height="11" rx="5.5" fill="#0071e3" fill-opacity=".5" class="grow" style="--d:.84s"/>
+        <rect x="176" y="122" width="60" height="11" rx="5.5" fill="#ff3b30" fill-opacity=".72" class="grow" style="--d:.96s"/>
+        <text x="242" y="131" font-family="SF Mono,monospace" font-size="8.5" fill="#ff3b30">ERROR</text>
+      </svg>
+      <div style="margin-top:20px;display:flex;align-items:center;gap:9px">
+        <span class="dot" style="background:var(--trace)"></span>
+        <h3 style="font-size:21px">Trace · 调用链</h3>
+      </div>
+      <p class="body" style="margin-top:11px;font-size:15.5px">
+        一次请求跨了哪些服务、每一跳花了多久、在哪一跳失败。traceID 串起全部 span，父子关系还原真实调用树。
+      </p>
+      <p class="small" style="margin-top:14px;color:#a1a1a6">回答：慢在哪一跳？错在谁身上？</p>
+    </div>
+
+    <!-- METRICS -->
+    <div class="card a" style="--d:.36s;padding:30px 30px 26px">
+      <svg viewBox="0 0 320 138" style="width:100%;height:138px" fill="none">
+        <defs>
+          <linearGradient id="mg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#00a37a" stop-opacity=".22"/>
+            <stop offset="100%" stop-color="#00a37a" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <g stroke="#eef0f4" stroke-width="1">
+          <line x1="0" y1="24" x2="320" y2="24"/><line x1="0" y1="62" x2="320" y2="62"/><line x1="0" y1="100" x2="320" y2="100"/>
+        </g>
+        <path d="M4 104 L40 96 L76 100 L112 76 L148 82 L184 52 L220 58 L256 34 L292 40 L316 28"
+              stroke="#00a37a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+              pathLength="1" class="draw" style="--d:.5s"/>
+        <path d="M4 104 L40 96 L76 100 L112 76 L148 82 L184 52 L220 58 L256 34 L292 40 L316 28 L316 138 L4 138 Z"
+              fill="url(#mg)" class="a-in" style="--d:1.05s"/>
+        <circle cx="256" cy="34" r="4" fill="#00a37a"/>
+        <circle cx="256" cy="34" r="10" fill="#00a37a" fill-opacity=".14" class="blink"/>
+        <text x="4" y="132" font-family="SF Mono,monospace" font-size="8.5" fill="#a1a1a6">30s / 点 · p95 312ms</text>
+      </svg>
+      <div style="margin-top:20px;display:flex;align-items:center;gap:9px">
+        <span class="dot" style="background:var(--metric)"></span>
+        <h3 style="font-size:21px">Metrics · 数值趋势</h3>
+      </div>
+      <p class="body" style="margin-top:11px;font-size:15.5px">
+        计数、耗时分布、CPU / 内存、对象状态。每 30–60 秒一个点，用于看趋势、做容量与告警。
+      </p>
+      <p class="small" style="margin-top:14px;color:#a1a1a6">回答：整体健康度如何？还剩多少余量？</p>
+    </div>
+
+    <!-- LOGS -->
+    <div class="card a" style="--d:.46s;padding:30px 30px 26px">
+      <svg viewBox="0 0 320 138" style="width:100%;height:138px" fill="none">
+        <rect x="0" y="0" width="320" height="138" rx="10" fill="#1d1d1f" fill-opacity=".035"/>
+        <g font-family="SF Mono,monospace" font-size="8.5" fill="#a1a1a6">
+          <text x="14" y="24">12:00:00  INFO   inventory ready</text>
+          <text x="14" y="46">12:00:01  WARN   pool &gt; 80%</text>
+          <text x="14" y="68" fill="#d9760b">12:00:02  ERROR  timeout</text>
+          <text x="14" y="90" fill="#8e8e93">12:00:02  trace=4bf92f35</text>
+          <text x="14" y="112" fill="#8e8e93">          span=00f067aa</text>
+        </g>
+        <rect x="8" y="56" width="304" height="20" rx="5" fill="#d9760b" fill-opacity=".09" class="a-in" style="--d:.7s"/>
+        <rect x="8" y="56" width="304" height="20" rx="5" fill="none" stroke="#d9760b" stroke-opacity=".4" class="a-in" style="--d:.7s"/>
+      </svg>
+      <div style="margin-top:20px;display:flex;align-items:center;gap:9px">
+        <span class="dot" style="background:var(--log)"></span>
+        <h3 style="font-size:21px">Logs · 事件原文</h3>
+      </div>
+      <p class="body" style="margin-top:11px;font-size:15.5px">
+        应用 stdout / stderr 与 Kubernetes 事件。解析出原生 trace / span 字段后，日志可以一键跳回链路。
+      </p>
+      <p class="small" style="margin-top:14px;color:#a1a1a6">回答：当时到底发生了什么？</p>
+    </div>
+  </div>
+
+  <div class="a" style="--d:.6s;margin-top:36px;padding:20px 24px;background:#f4f5f8;border-radius:14px;display:flex;gap:18px;align-items:center">
+    <span class="mono" style="color:var(--ink);font-size:12px;letter-spacing:.08em">注意</span>
+    <span class="body" style="font-size:15.5px">
+      日志里出现 <b>ERROR</b> 不等于 span 状态是 ERROR；HTTP 200 的业务失败也不会自动标红 —— 这两件事必须在埋点里主动标记。
+    </span>
+  </div>
+</section>
+
+<!-- ================= 04 数据从哪来 ================= -->
+<section class="slide" data-sec="数据来源">
+  <div class="kicker a" style="--d:.02s">Where The Data Comes From</div>
+  <h2 class="a" style="--d:.08s;margin-top:20px">三类数据，三条采集路径</h2>
+
+  <div style="margin-top:44px">
+    <div class="a" style="--d:.18s;display:grid;grid-template-columns:176px 1fr 330px;gap:32px;padding:24px 0;border-top:1px solid var(--line);align-items:start">
+      <div>
+        <div class="mono" style="color:var(--trace);font-size:11px;letter-spacing:.12em">APPLICATION</div>
+        <div style="font-size:19px;font-weight:600;margin-top:7px">应用侧</div>
+      </div>
+      <div>
+        <p class="body" style="font-size:16px">
+          探针以 <span class="mono" style="font-size:14px">initContainer</span> 形式挂进业务 Pod，把
+          <span class="mono" style="font-size:14px">-javaagent</span> 追加到启动参数；支持的框架自动产生 span 与 JVM / HTTP 指标，经 OTLP 发往 Gateway。
+        </p>
+        <p class="small" style="margin-top:10px">
+          不改代码 · 不改镜像 · 只加 annotation。Go 等无自动注入的语言用 inject-sdk 提供环境变量，由代码初始化 SDK。
+        </p>
+      </div>
+      <div class="code" style="font-size:11px;padding:14px 16px;line-height:1.75">inject-java: <span class="s">observability/standard</span>
+container-names: <span class="s">app</span></div>
+    </div>
+
+    <div class="a" style="--d:.3s;display:grid;grid-template-columns:176px 1fr 330px;gap:32px;padding:24px 0;border-top:1px solid var(--line2);align-items:start">
+      <div>
+        <div class="mono" style="color:var(--log);font-size:11px;letter-spacing:.12em">NODE</div>
+        <div style="font-size:19px;font-weight:600;margin-top:7px">节点侧</div>
+      </div>
+      <div>
+        <p class="body" style="font-size:16px">
+          每个 Linux 节点一个 DaemonSet：<span class="mono" style="font-size:14px">filelog</span> 直接读容器日志文件（含轮转文件），
+          <span class="mono" style="font-size:14px">hostmetrics</span> 采 CPU / 内存 / 磁盘 / 网络，
+          <span class="mono" style="font-size:14px">kubeletstats</span> 采 Pod 与容器指标。
+        </p>
+        <p class="small" style="margin-top:10px">
+          日志读取位置 checkpoint 常驻节点 hostPath，节点重启可续读；文件轮转不会漏掉尾部。
+        </p>
+      </div>
+      <div class="small" style="line-height:1.95;padding-top:2px">
+        读的是宿主路径 <span class="mono" style="font-size:12px">/var/log/pods</span><br>
+        因此需要 root + hostPath 授权
+      </div>
+    </div>
+
+    <div class="a" style="--d:.42s;display:grid;grid-template-columns:176px 1fr 330px;gap:32px;padding:24px 0;border-top:1px solid var(--line2);align-items:start">
+      <div>
+        <div class="mono" style="color:var(--metric);font-size:11px;letter-spacing:.12em">CLUSTER</div>
+        <div style="font-size:19px;font-weight:600;margin-top:7px">集群侧</div>
+      </div>
+      <div>
+        <p class="body" style="font-size:16px">
+          <span class="mono" style="font-size:14px">k8s_cluster</span> 读 Deployment / Node / 配额等对象状态，
+          <span class="mono" style="font-size:14px">k8s_events</span> 读集群事件；业务已暴露的
+          <span class="mono" style="font-size:14px">/metrics</span> 由 Target Allocator 发现目标、Scraper 分片抓取。
+        </p>
+        <p class="small" style="margin-top:10px">
+          已有 node-exporter / kube-state-metrics 可继续用 —— 只要为每类指标指定唯一采集路径。
+        </p>
+      </div>
+      <div class="small" style="line-height:1.95;padding-top:2px">
+        TA 负责发现与分片<br>
+        两个 Scraper 不会重复抓同一目标
+      </div>
+    </div>
+    <div class="a" style="--d:.56s;margin-top:38px">
+      <div class="kicker" style="font-size:10px;color:var(--faint)">一页矩阵：哪种信号，从哪一层来</div>
+      <div style="display:grid;grid-template-columns:200px 1fr 1fr 1fr;margin-top:16px;border-top:1px solid var(--line)">
+        <div style="padding:12px 0;border-bottom:1px solid var(--line2)"></div>
+        <div style="padding:12px 0;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:7px">
+          <span class="dot" style="background:var(--trace)"></span><span style="font-size:12.5px;font-weight:600">Trace</span>
+        </div>
+        <div style="padding:12px 0;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:7px">
+          <span class="dot" style="background:var(--metric)"></span><span style="font-size:12.5px;font-weight:600">Metrics</span>
+        </div>
+        <div style="padding:12px 0;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:7px">
+          <span class="dot" style="background:var(--log)"></span><span style="font-size:12.5px;font-weight:600">Logs</span>
+        </div>
+
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:14px;font-weight:500">应用侧</div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#55555b">探针自动埋点 · W3C 传播</div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#55555b">SDK 指标：JVM / HTTP / 业务</div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#55555b">stdout / stderr</div>
+
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:14px;font-weight:500">节点侧</div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#c8c9cf">—</div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#55555b">hostmetrics · kubeletstats</div>
+        <div style="padding:14px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#55555b">filelog 读容器文件</div>
+
+        <div style="padding:14px 0;font-size:14px;font-weight:500">集群侧</div>
+        <div style="padding:14px 0;font-size:13.5px;color:#c8c9cf">—</div>
+        <div style="padding:14px 0;font-size:13.5px;color:#55555b">k8s_cluster · Prometheus 抓取</div>
+        <div style="padding:14px 0;font-size:13.5px;color:#55555b">k8s_events</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 05 总体架构 ================= -->
+<section class="slide wide" data-sec="总体架构">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <div>
+      <div class="kicker a" style="--d:.02s">Architecture</div>
+      <h2 class="a" style="--d:.08s;margin-top:14px;font-size:44px">总体架构：一条流水线，五个角色</h2>
+    </div>
+    <div class="a" style="--d:.2s;font-size:13px;color:var(--muted)">每个集群独立一套 · cluster_name 唯一 · 可共用一个后端</div>
+  </div>
+
+  <svg viewBox="0 0 1488 600" style="width:100%;margin-top:34px" fill="none">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="#b9bcc4"/>
+      </marker>
+      <marker id="arB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="#0071e3"/>
+      </marker>
+    </defs>
+
+    <text x="24" y="14" font-family="SF Pro Text,sans-serif" font-size="11" letter-spacing="2.2" fill="#a1a1a6">数据源</text>
+
+    <g class="a" style="--d:.12s">
+      <rect x="24" y="26" width="238" height="66" rx="13" fill="#fff" stroke="#e2e3e9"/>
+      <text x="42" y="54" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">应用 Pod</text>
+      <text x="42" y="76" font-family="SF Mono,monospace" font-size="11" fill="#86868b">探针 / SDK · OTLP</text>
+    </g>
+    <g class="a" style="--d:.18s">
+      <rect x="24" y="108" width="238" height="66" rx="13" fill="#fff" stroke="#e2e3e9"/>
+      <text x="42" y="136" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">容器 stdout / stderr</text>
+      <text x="42" y="158" font-family="SF Mono,monospace" font-size="11" fill="#86868b">/var/log/pods · *.log.*</text>
+    </g>
+    <g class="a" style="--d:.24s">
+      <rect x="24" y="190" width="238" height="66" rx="13" fill="#fff" stroke="#e2e3e9"/>
+      <text x="42" y="218" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">节点 / 容器</text>
+      <text x="42" y="240" font-family="SF Mono,monospace" font-size="11" fill="#86868b">hostmetrics · kubeletstats</text>
+    </g>
+    <g class="a" style="--d:.3s">
+      <rect x="24" y="272" width="238" height="66" rx="13" fill="#fff" stroke="#e2e3e9"/>
+      <text x="42" y="300" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">集群对象 / 事件</text>
+      <text x="42" y="322" font-family="SF Mono,monospace" font-size="11" fill="#86868b">k8s_cluster · k8s_events</text>
+    </g>
+
+    <g class="a" style="--d:.36s">
+      <rect x="24" y="356" width="238" height="196" rx="16" fill="#f4f6f9" stroke="#e2e3e9" stroke-dasharray="4 4"/>
+      <text x="42" y="380" font-family="SF Pro Text,sans-serif" font-size="11" letter-spacing="1.8" fill="#a1a1a6">指标发现</text>
+      <rect x="40" y="390" width="206" height="58" rx="11" fill="#fff" stroke="#e2e3e9"/>
+      <text x="56" y="414" font-family="SF Pro Text,sans-serif" font-size="14" font-weight="600" fill="#1d1d1f">Target Allocator ×1</text>
+      <text x="56" y="434" font-family="SF Mono,monospace" font-size="10.5" fill="#86868b">发现 Monitor / 分片目标</text>
+      <rect x="40" y="458" width="206" height="58" rx="11" fill="#fff" stroke="#e2e3e9"/>
+      <text x="56" y="482" font-family="SF Pro Text,sans-serif" font-size="14" font-weight="600" fill="#1d1d1f">Scraper ×2</text>
+      <text x="56" y="502" font-family="SF Mono,monospace" font-size="10.5" fill="#86868b">抓取业务 /metrics</text>
+    </g>
+
+    <g stroke="#c9ccd4" stroke-width="1.2" marker-end="url(#ar)" fill="none">
+      <path d="M262 59 C298 59 300 150 330 172" pathLength="1" class="draw" style="--d:.5s"/>
+      <path d="M262 141 C298 141 300 186 330 202" pathLength="1" class="draw" style="--d:.55s"/>
+      <path d="M262 223 C298 223 300 228 330 232" pathLength="1" class="draw" style="--d:.6s"/>
+      <path d="M262 305 C298 305 300 270 330 264" pathLength="1" class="draw" style="--d:.65s"/>
+      <path d="M248 487 C296 487 300 320 330 300" pathLength="1" class="draw" style="--d:.7s"/>
+    </g>
+
+    <g class="a-scale" style="--d:.62s">
+      <rect x="330" y="96" width="196" height="320" rx="18" fill="#fff" stroke="#1d1d1f" stroke-opacity=".18" stroke-width="1.4"/>
+      <rect x="330" y="96" width="196" height="4" rx="2" fill="#1d1d1f" fill-opacity=".8"/>
+      <text x="350" y="136" font-family="SF Pro Text,sans-serif" font-size="18" font-weight="600" fill="#1d1d1f">Gateway</text>
+      <text x="350" y="157" font-family="SF Mono,monospace" font-size="11" fill="#86868b">StatefulSet ×2</text>
+      <g font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#55555b">
+        <text x="350" y="190">① 统一接入 OTLP</text>
+        <text x="350" y="216">② 补全 K8s 身份</text>
+        <text x="350" y="242">③ 脱敏 / 过滤</text>
+        <text x="350" y="268">④ 指标标签归一</text>
+        <text x="350" y="294">⑤ 按 traceID 路由</text>
+      </g>
+      <text x="350" y="332" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">队列：内存 / PVC</text>
+      <text x="350" y="352" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">4317 gRPC · 4318 HTTP</text>
+      <text x="350" y="386" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">memory_limiter 起步</text>
+    </g>
+
+    <g stroke="#0071e3" stroke-width="1.8" marker-end="url(#arB)" fill="none">
+      <path d="M526 200 L594 200" pathLength="1" class="draw" style="--d:.95s"/>
+    </g>
+    <text x="530" y="190" font-family="SF Mono,monospace" font-size="10" fill="#0071e3">traces</text>
+
+    <g class="a-scale" style="--d:.9s">
+      <rect x="594" y="140" width="184" height="140" rx="16" fill="#eaf3fe" stroke="#0071e3" stroke-opacity=".32"/>
+      <text x="614" y="172" font-family="SF Pro Text,sans-serif" font-size="16.5" font-weight="600" fill="#0071e3">Sampler ×2</text>
+      <text x="614" y="196" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#3d6b96">尾采样：ERROR /</text>
+      <text x="614" y="216" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#3d6b96">≥2000ms / 10%</text>
+      <text x="614" y="246" font-family="SF Mono,monospace" font-size="10" fill="#7a9dbd">同一 trace 只落一个分片</text>
+      <text x="614" y="264" font-family="SF Mono,monospace" font-size="10" fill="#7a9dbd">60s 决策窗口 · 内存</text>
+    </g>
+
+    <g stroke="#c9ccd4" stroke-width="1.2" marker-end="url(#ar)" fill="none">
+      <path d="M526 300 C660 300 740 300 854 296" pathLength="1" class="draw" style="--d:1s"/>
+      <path d="M526 380 C600 380 700 420 760 436 C800 446 826 446 854 446" pathLength="1" class="draw" style="--d:1.05s"/>
+    </g>
+    <g stroke="#0071e3" stroke-width="1.8" marker-end="url(#arB)" fill="none">
+      <path d="M778 190 C810 190 826 160 854 150" pathLength="1" class="draw" style="--d:1.15s"/>
+    </g>
+
+    <g class="a" style="--d:1.05s">
+      <rect x="854" y="90" width="240" height="112" rx="16" fill="#fff" stroke="#0071e3" stroke-opacity=".3"/>
+      <text x="874" y="120" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">Trace 后端</text>
+      <text x="874" y="144" font-family="SF Mono,monospace" font-size="11" fill="#86868b">Tempo / Jaeger / 厂商</text>
+      <text x="874" y="164" font-family="SF Mono,monospace" font-size="11" fill="#86868b">OTLP HTTP · TLS 校验</text>
+      <text x="874" y="186" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">只收采样后的链路</text>
+    </g>
+    <g class="a" style="--d:1.12s">
+      <rect x="854" y="240" width="240" height="112" rx="16" fill="#fff" stroke="#d9760b" stroke-opacity=".3"/>
+      <text x="874" y="270" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">Logs 后端</text>
+      <text x="874" y="294" font-family="SF Mono,monospace" font-size="11" fill="#86868b">Elasticsearch / Loki</text>
+      <text x="874" y="314" font-family="SF Mono,monospace" font-size="11" fill="#86868b">OTLP 接入端（非 Bulk）</text>
+      <text x="874" y="336" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">原始 ES:9200 不能直连</text>
+    </g>
+    <g class="a" style="--d:1.19s">
+      <rect x="854" y="390" width="240" height="112" rx="16" fill="#fff" stroke="#00a37a" stroke-opacity=".3"/>
+      <text x="874" y="420" font-family="SF Pro Text,sans-serif" font-size="15.5" font-weight="600" fill="#1d1d1f">Metrics 后端</text>
+      <text x="874" y="444" font-family="SF Mono,monospace" font-size="11" fill="#86868b">Prometheus / AMP</text>
+      <text x="874" y="464" font-family="SF Mono,monospace" font-size="11" fill="#86868b">OTLP 或 Remote Write</text>
+      <text x="874" y="486" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">需开乱序窗口</text>
+    </g>
+
+    <g class="a" style="--d:1.28s">
+      <rect x="330" y="470" width="196" height="82" rx="14" fill="#fafafa" stroke="#c9ccd4" stroke-dasharray="5 5"/>
+      <text x="350" y="500" font-family="SF Pro Text,sans-serif" font-size="14" font-weight="600" fill="#55555b">Operator ×1</text>
+      <text x="350" y="520" font-family="SF Pro Text,sans-serif" font-size="11.5" fill="#86868b">创建 CR · 注入探针</text>
+      <text x="350" y="538" font-family="SF Pro Text,sans-serif" font-size="11.5" fill="#a1a1a6">不在数据转发路径上</text>
+    </g>
+
+    <g class="a" style="--d:1.3s">
+      <line x1="1136" y1="90" x2="1136" y2="502" stroke="#e8e9ee" stroke-width="1"/>
+      <text x="1168" y="104" font-family="SF Pro Text,sans-serif" font-size="11" letter-spacing="1.8" fill="#a1a1a6">读这张图的三个要点</text>
+
+      <text x="1168" y="146" font-family="SF Pro Text,sans-serif" font-size="14.5" font-weight="600" fill="#1d1d1f">采集层不存数据</text>
+      <text x="1168" y="170" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">Collector 是管道，不是数据库。</text>
+      <text x="1168" y="190" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">队列只做缓冲，容量有界。</text>
+
+      <text x="1168" y="246" font-family="SF Pro Text,sans-serif" font-size="14.5" font-weight="600" fill="#1d1d1f">只有 trace 会分叉</text>
+      <text x="1168" y="270" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">日志与指标由 Gateway 直接出。</text>
+      <text x="1168" y="290" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">尾采样必须先看完整条链路。</text>
+
+      <text x="1168" y="346" font-family="SF Pro Text,sans-serif" font-size="14.5" font-weight="600" fill="#1d1d1f">Operator 不在数据面</text>
+      <text x="1168" y="370" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">它只创建资源、注入探针，</text>
+      <text x="1168" y="390" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">不转发任何一条遥测数据。</text>
+
+      <text x="1168" y="446" font-family="SF Pro Text,sans-serif" font-size="14.5" font-weight="600" fill="#1d1d1f">平台不装存储</text>
+      <text x="1168" y="470" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">查询、看板、告警都在既有后端。</text>
+      <text x="1168" y="490" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#6e6e73">这里只保证数据送得到。</text>
+    </g>
+
+    <circle r="3.6" fill="#0071e3"><animateMotion dur="3.2s" repeatCount="indefinite" path="M262 59 C298 59 300 150 330 172"/></circle>
+    <circle r="3.6" fill="#0071e3" opacity=".45"><animateMotion dur="3.2s" begin="-1.6s" repeatCount="indefinite" path="M262 59 C298 59 300 150 330 172"/></circle>
+    <circle r="3.6" fill="#d9760b"><animateMotion dur="3.4s" begin="-.4s" repeatCount="indefinite" path="M262 141 C298 141 300 186 330 202"/></circle>
+    <circle r="3.6" fill="#00a37a"><animateMotion dur="3.6s" begin="-.9s" repeatCount="indefinite" path="M262 305 C298 305 300 270 330 264"/></circle>
+    <circle r="3.6" fill="#0071e3"><animateMotion dur="2.6s" begin="-.6s" repeatCount="indefinite" path="M526 200 L594 200"/></circle>
+    <circle r="3.6" fill="#0071e3"><animateMotion dur="2.8s" repeatCount="indefinite" path="M778 190 C810 190 826 160 854 150"/></circle>
+    <circle r="3.6" fill="#d9760b"><animateMotion dur="3.2s" begin="-1s" repeatCount="indefinite" path="M526 300 C660 300 740 300 854 296"/></circle>
+    <circle r="3.6" fill="#00a37a"><animateMotion dur="3.2s" begin="-2s" repeatCount="indefinite" path="M526 380 C600 380 700 420 760 436 C800 446 826 446 854 446"/></circle>
+  </svg>
+</section>
+
+<!-- ================= 06 一次请求的旅程 ================= -->
+<section class="slide" data-sec="请求旅程">
+  <div class="kicker a" style="--d:.02s">One Request, End To End</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px;font-size:46px">一次请求的完整旅程</h2>
+
+  <div style="display:grid;grid-template-columns:1fr 372px;gap:52px;margin-top:30px">
+    <div>
+      <svg viewBox="0 0 900 400" style="width:100%" fill="none">
+        <g stroke="#e8e9ee" stroke-width="1">
+          <line x1="150" y1="44" x2="150" y2="360"/>
+          <line x1="150" y1="360" x2="890" y2="360"/>
+        </g>
+        <g font-family="SF Mono,monospace" font-size="9.5" fill="#b9bcc4">
+          <text x="146" y="380">0</text>
+          <text x="320" y="380">600ms</text>
+          <text x="500" y="380">1200ms</text>
+          <text x="676" y="380">1800ms</text>
+          <text x="856" y="380">2400ms</text>
+        </g>
+        <line x1="740" y1="34" x2="740" y2="360" stroke="#ff3b30" stroke-opacity=".4" stroke-dasharray="3 4"/>
+        <text x="740" y="22" font-family="SF Mono,monospace" font-size="9.5" fill="#ff3b30">2000ms 慢请求阈值</text>
+
+        <g font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#3d3d41">
+          <text x="0" y="66">GET /orders</text>
+          <text x="0" y="122">auth-service</text>
+          <text x="0" y="178">inventory-api</text>
+          <text x="0" y="234">JDBC SELECT</text>
+          <text x="0" y="290">payment-api</text>
+          <text x="0" y="346">notify-worker</text>
+        </g>
+
+        <rect x="150" y="54" width="712" height="16" rx="8" fill="#0071e3" fill-opacity=".14"/>
+        <rect x="150" y="54" width="712" height="16" rx="8" fill="#0071e3" fill-opacity=".45" class="grow" style="--d:.2s"/>
+        <rect x="152" y="110" width="26" height="16" rx="8" fill="#0071e3" class="grow" style="--d:.4s"/>
+        <rect x="186" y="166" width="332" height="16" rx="8" fill="#0071e3" fill-opacity=".82" class="grow" style="--d:.55s"/>
+        <rect x="192" y="222" width="314" height="16" rx="8" fill="#0071e3" fill-opacity=".55" class="grow" style="--d:.7s"/>
+        <rect x="538" y="278" width="178" height="16" rx="8" fill="#ff3b30" fill-opacity=".65" class="grow" style="--d:.85s"/>
+        <rect x="728" y="334" width="112" height="16" rx="8" fill="#ff3b30" fill-opacity=".85" class="grow" style="--d:1s"/>
+
+        <g font-family="SF Mono,monospace" font-size="9.5" fill="#86868b">
+          <text x="187" y="122">28ms</text>
+          <text x="526" y="178">1130ms</text>
+          <text x="514" y="234">1050ms</text>
+          <text x="724" y="290" fill="#ff3b30">640ms · ERROR</text>
+          <text x="728" y="326" fill="#ff3b30">378ms</text>
+        </g>
+      </svg>
+
+      <div class="a" style="--d:1.15s;display:flex;gap:14px;align-items:center;margin-top:2px;padding-left:150px">
+        <span class="mono" style="font-size:11px;color:#86868b">trace_id</span>
+        <span class="mono" style="font-size:12px;color:#1d1d1f;background:#f2f3f7;padding:4px 10px;border-radius:6px">4bf92f3577b34da6a3ce929d0e0e4736</span>
+        <span class="small" style="margin-left:auto">6 个 span · 同一条 trace</span>
+      </div>
+    </div>
+
+    <div style="padding-top:2px">
+      <div class="a" style="--d:.3s;border-left:2px solid var(--trace);padding-left:18px">
+        <div class="mono" style="font-size:10.5px;color:var(--trace);letter-spacing:.1em">01 SDK</div>
+        <p class="body" style="font-size:14.5px;margin-top:7px">请求进来，探针自动开 root span，生成 traceID 并写进日志上下文。</p>
+      </div>
+      <div class="a" style="--d:.45s;border-left:2px solid var(--trace);padding-left:18px;margin-top:22px">
+        <div class="mono" style="font-size:10.5px;color:var(--trace);letter-spacing:.1em">02 传播</div>
+        <p class="body" style="font-size:14.5px;margin-top:7px">traceparent 头随 HTTP / MQ 传下去，下游服务接上同一棵树。</p>
+      </div>
+      <div class="a" style="--d:.6s;border-left:2px solid var(--trace);padding-left:18px;margin-top:22px">
+        <div class="mono" style="font-size:10.5px;color:var(--trace);letter-spacing:.1em">03 导出</div>
+        <p class="body" style="font-size:14.5px;margin-top:7px">span 攒批后经 OTLP HTTP 发到 Gateway 4318，日志同步写进 stdout。</p>
+      </div>
+      <div class="a" style="--d:.75s;border-left:2px solid var(--trace);padding-left:18px;margin-top:22px">
+        <div class="mono" style="font-size:10.5px;color:var(--trace);letter-spacing:.1em">04 等待</div>
+        <p class="body" style="font-size:14.5px;margin-top:7px">Sampler 缓存 60 秒，等这条 trace 的 span 到齐，再决定留或丢。</p>
+      </div>
+      <div class="a" style="--d:.9s;border-left:2px solid var(--trace);padding-left:18px;margin-top:22px">
+        <div class="mono" style="font-size:10.5px;color:var(--trace);letter-spacing:.1em">05 落库</div>
+        <p class="body" style="font-size:14.5px;margin-top:7px">命中「有 ERROR」且「超过 2 秒」，整条链路被保留，可点开看瀑布图。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="a" style="--d:1.3s;margin-top:22px;padding:16px 22px;background:#f4f5f8;border-radius:13px;display:flex;gap:16px;align-items:baseline">
+    <span class="mono" style="font-size:11.5px;color:var(--ink);letter-spacing:.08em">注意</span>
+    <span class="body" style="font-size:15px">
+      60 秒是<b>从收到第一个 span 开始算</b>，不是请求结束后再等 60 秒。晚到的 span 可能继承已缓存的丢弃决定。
+    </span>
+  </div>
+</section>
+
+<!-- ================= 07 注入机制 ================= -->
+<section class="slide" data-sec="零改代码注入">
+  <div class="kicker a" style="--d:.02s">Zero-Code Injection</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px">不改代码，探针是怎么进去的</h2>
+  <p class="body a" style="--d:.14s;margin-top:14px;max-width:900px">
+    关键在于 Kubernetes 的 <b>准入 Webhook</b>：Pod 还没启动，Operator 就已经把探针和配置写进了它的定义里。
+  </p>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:44px">
+    <div class="card a" style="--d:.24s;padding:26px 24px">
+      <div class="num" style="font-size:30px;color:#c8c9cf">01</div>
+      <h3 style="font-size:17.5px;margin-top:12px">提交 Deployment</h3>
+      <p class="body" style="font-size:13.5px;margin-top:9px">Pod 模板上带一行 annotation，指向某个 Instrumentation 配置。</p>
+      <div class="mono" style="font-size:10px;color:#86868b;margin-top:14px;line-height:1.8">inject-java:<br>observability/standard</div>
+    </div>
+
+    <div class="card a" style="--d:.36s;padding:26px 24px;border-color:#1d1d1f;border-width:1.4px">
+      <div class="num" style="font-size:30px;color:#1d1d1f">02</div>
+      <h3 style="font-size:17.5px;margin-top:12px">Webhook 拦截</h3>
+      <p class="body" style="font-size:13.5px;margin-top:9px">控制面把 Pod 定义交给 Operator 的 Webhook，它改写 spec 后返回。</p>
+      <div class="mono" style="font-size:10px;color:#86868b;margin-top:14px;line-height:1.8">MutatingWebhook<br>failurePolicy: Ignore</div>
+    </div>
+
+    <div class="card a" style="--d:.48s;padding:26px 24px">
+      <div class="num" style="font-size:30px;color:#c8c9cf">03</div>
+      <h3 style="font-size:17.5px;margin-top:12px">initContainer 复制</h3>
+      <p class="body" style="font-size:13.5px;margin-top:9px">新增初始化容器，把 agent 拷到共享空目录，并注入环境变量。</p>
+      <div class="mono" style="font-size:10px;color:#86868b;margin-top:14px;line-height:1.8">JAVA_TOOL_OPTIONS<br>+ -javaagent:/otel/…</div>
+    </div>
+
+    <div class="card a" style="--d:.6s;padding:26px 24px">
+      <div class="num" style="font-size:30px;color:#c8c9cf">04</div>
+      <h3 style="font-size:17.5px;margin-top:12px">应用照常启动</h3>
+      <p class="body" style="font-size:13.5px;margin-top:9px">业务进程不知道自己被埋点了，只是多了些 span 和指标往外发。</p>
+      <div class="mono" style="font-size:10px;color:#86868b;margin-top:14px;line-height:1.8">OTEL_EXPORTER_OTLP_<br>ENDPOINT=…:4318</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:40px">
+    <div class="a" style="--d:.75s">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="dot" style="background:var(--metric)"></span>
+        <span style="font-size:14.5px;font-weight:600">怎么算注入成功</span>
+      </div>
+      <p class="body" style="font-size:14.5px;margin-top:9px">
+        看新 Pod 里有没有 <span class="mono" style="font-size:13px">initContainer</span>，再看后端有没有数据。
+        只看 Deployment 上有 annotation <b>不算</b> 注入成功。
+      </p>
+    </div>
+    <div class="a" style="--d:.85s">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="dot" style="background:#ff3b30"></span>
+        <span style="font-size:14.5px;font-weight:600">唯一风险点</span>
+      </div>
+      <p class="body" style="font-size:14.5px;margin-top:9px">
+        Webhook 故障时（默认 Ignore），Pod 会正常创建但<b>没有探针</b> —— 业务不受影响，
+        但这段流量没有链路数据。所以必须对注入失败单独告警。
+      </p>
+    </div>
+  </div>
+
+  <svg viewBox="0 0 1416 158" style="width:100%;margin-top:36px" fill="none">
+    <defs>
+      <marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="#c9ccd4"/>
+      </marker>
+    </defs>
+    <text x="0" y="12" font-family="SF Pro Text,sans-serif" font-size="10.5" letter-spacing="1.8" fill="#a1a1a6">一次发布里，注入发生在第 3 步 —— 早于镜像拉取</text>
+
+    <g class="a" style="--d:.95s">
+      <rect x="0" y="34" width="196" height="74" rx="12" fill="#fff" stroke="#e2e3e9"/>
+      <text x="18" y="62" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#1d1d1f">① 提交 Pod</text>
+      <text x="18" y="84" font-family="SF Mono,monospace" font-size="9.5" fill="#86868b">Deployment 更新</text>
+    </g>
+    <g class="a" style="--d:1.02s">
+      <rect x="244" y="34" width="196" height="74" rx="12" fill="#fff" stroke="#e2e3e9"/>
+      <text x="262" y="62" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#1d1d1f">② API Server</text>
+      <text x="262" y="84" font-family="SF Mono,monospace" font-size="9.5" fill="#86868b">发起准入请求</text>
+    </g>
+    <g class="a" style="--d:1.09s">
+      <rect x="488" y="34" width="196" height="74" rx="12" fill="#1d1d1f"/>
+      <text x="506" y="62" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#fff">③ Webhook</text>
+      <text x="506" y="84" font-family="SF Mono,monospace" font-size="9.5" fill="#a1a1a6">改写 spec 后返回</text>
+    </g>
+    <g class="a" style="--d:1.16s">
+      <rect x="732" y="34" width="196" height="74" rx="12" fill="#fff" stroke="#e2e3e9"/>
+      <text x="750" y="62" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#1d1d1f">④ kubelet</text>
+      <text x="750" y="84" font-family="SF Mono,monospace" font-size="9.5" fill="#86868b">拉镜像 · 起容器</text>
+    </g>
+    <g class="a" style="--d:1.23s">
+      <rect x="976" y="34" width="196" height="74" rx="12" fill="#fff" stroke="#e2e3e9"/>
+      <text x="994" y="62" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#1d1d1f">⑤ initContainer</text>
+      <text x="994" y="84" font-family="SF Mono,monospace" font-size="9.5" fill="#86868b">复制 agent 到卷</text>
+    </g>
+    <g class="a" style="--d:1.3s">
+      <rect x="1220" y="34" width="196" height="74" rx="12" fill="#eaf3fe" stroke="#0071e3" stroke-opacity=".32"/>
+      <text x="1238" y="62" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#0071e3">⑥ 应用启动</text>
+      <text x="1238" y="84" font-family="SF Mono,monospace" font-size="9.5" fill="#5b87b3">-javaagent 生效</text>
+    </g>
+
+    <g stroke="#c9ccd4" stroke-width="1.2" marker-end="url(#ar4)" fill="none">
+      <path d="M196 71 L240 71" pathLength="1" class="draw" style="--d:1.1s"/>
+      <path d="M440 71 L484 71" pathLength="1" class="draw" style="--d:1.17s"/>
+      <path d="M684 71 L728 71" pathLength="1" class="draw" style="--d:1.24s"/>
+      <path d="M928 71 L972 71" pathLength="1" class="draw" style="--d:1.31s"/>
+      <path d="M1172 71 L1216 71" pathLength="1" class="draw" style="--d:1.38s"/>
+    </g>
+
+    <text x="0" y="136" font-family="SF Pro Text,sans-serif" font-size="11" fill="#a1a1a6">改写只发生在内存里的 Pod 定义上：不重建 Deployment，也不改镜像。</text>
+  </svg>
+</section>
+
+<!-- ================= 08 尾采样 ================= -->
+<section class="slide" data-sec="尾采样">
+  <div class="kicker a" style="--d:.02s">Tail Sampling</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px">尾采样：先看完整条链路，再决定留不留</h2>
+
+  <svg viewBox="0 0 1488 286" style="width:100%;margin-top:24px" fill="none">
+    <defs>
+      <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="#b9bcc4"/>
+      </marker>
+    </defs>
+
+    <rect x="0" y="0" width="880" height="240" rx="18" fill="#f4f6f9" stroke="#e2e3e9"/>
+    <text x="26" y="34" font-family="SF Pro Text,sans-serif" font-size="12.5" fill="#86868b">60 秒决策窗口 · 未决 trace 全部缓存在内存</text>
+
+    <g>
+      <rect x="24" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="74" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="124" y="66" width="34" height="86" rx="7" fill="#ff3b30" fill-opacity=".2"/>
+      <rect x="174" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="224" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="274" y="66" width="34" height="86" rx="7" fill="#ff9500" fill-opacity=".2"/>
+      <rect x="324" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="374" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="424" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="474" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="524" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="574" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="624" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="674" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="724" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="774" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+      <rect x="824" y="66" width="34" height="86" rx="7" fill="#0071e3" fill-opacity=".16"/>
+    </g>
+    <rect x="124" y="66" width="34" height="86" rx="7" fill="#ff3b30" fill-opacity=".5"/>
+    <rect x="274" y="66" width="34" height="86" rx="7" fill="#ff9500" fill-opacity=".5"/>
+
+    <text x="26" y="190" font-family="SF Pro Text,sans-serif" font-size="12" fill="#6e6e73">每条 trace 陆续到达，此刻还不知道它是快是慢、有没有报错。</text>
+    <text x="26" y="214" font-family="SF Pro Text,sans-serif" font-size="12" fill="#a1a1a6">要等窗口关闭、span 到齐，才能对整条链路下判断。</text>
+
+    <path d="M880 110 C898 110 902 110 914 110" stroke="#c9ccd4" stroke-width="1.3" marker-end="url(#ar2)" fill="none"/>
+
+    <g class="a-scale" style="--d:.6s">
+      <rect x="914" y="50" width="144" height="120" rx="16" fill="#1d1d1f"/>
+      <text x="986" y="100" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="15" font-weight="600" fill="#fff">决定</text>
+      <text x="986" y="124" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#a1a1a6">窗口关闭后</text>
+      <text x="986" y="144" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#a1a1a6">keep / drop</text>
+    </g>
+
+    <path d="M1058 88 C1080 88 1084 66 1096 66" stroke="#0071e3" stroke-width="1.8" fill="none" marker-end="url(#arB)"/>
+    <rect x="1096" y="38" width="196" height="58" rx="12" fill="#eaf3fe" stroke="#0071e3" stroke-opacity=".32"/>
+    <text x="1114" y="62" font-family="SF Pro Text,sans-serif" font-size="13" font-weight="600" fill="#0071e3">写入 Trace 后端</text>
+    <text x="1114" y="81" font-family="SF Mono,monospace" font-size="9.5" fill="#5b87b3">完整链路，可查瀑布图</text>
+
+    <path d="M1058 132 C1080 132 1084 154 1096 154" stroke="#c9ccd4" stroke-width="1.3" stroke-dasharray="3 4" fill="none" marker-end="url(#ar2)"/>
+    <rect x="1096" y="126" width="196" height="58" rx="12" fill="#f7f7f9" stroke="#e2e3e9"/>
+    <text x="1114" y="150" font-family="SF Pro Text,sans-serif" font-size="13" fill="#86868b">直接丢弃</text>
+    <text x="1114" y="169" font-family="SF Mono,monospace" font-size="9.5" fill="#b9bcc4">不占后端存储</text>
+
+    <text x="1330" y="60" font-family="SF Pro Text,sans-serif" font-size="11" letter-spacing="1.8" fill="#a1a1a6">代价</text>
+    <text x="1330" y="86" font-family="SF Pro Text,sans-serif" font-size="12" fill="#6e6e73">窗口越长，内存占用越大；</text>
+    <text x="1330" y="106" font-family="SF Pro Text,sans-serif" font-size="12" fill="#6e6e73">待决 trace 只在内存，</text>
+    <text x="1330" y="126" font-family="SF Pro Text,sans-serif" font-size="12" fill="#6e6e73">Collector 重启即丢。</text>
+    <text x="1330" y="158" font-family="SF Mono,monospace" font-size="9.5" fill="#b9bcc4">PVC 也保护不了它</text>
+  </svg>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr) 340px;gap:24px;margin-top:22px">
+    <div class="card a" style="--d:.8s;padding:24px 24px">
+      <div style="display:flex;align-items:center;gap:9px">
+        <span class="dot" style="background:#ff3b30"></span>
+        <span style="font-size:11px;letter-spacing:.12em;color:#a1a1a6">策略一</span>
+      </div>
+      <h3 style="font-size:17px;margin-top:10px">任意 span 状态 = ERROR</h3>
+      <p class="body" style="font-size:13px;margin-top:8px">
+        必须是 span 的 status，不是日志里出现「error」这几个字。SDK 没把 HTTP 500 标成 ERROR 时，要先修埋点。
+      </p>
+    </div>
+
+    <div class="card a" style="--d:.9s;padding:24px 24px">
+      <div style="display:flex;align-items:center;gap:9px">
+        <span class="dot" style="background:#ff9500"></span>
+        <span style="font-size:11px;letter-spacing:.12em;color:#a1a1a6">策略二</span>
+      </div>
+      <h3 style="font-size:17px;margin-top:10px">链路耗时 ≥ 2000ms</h3>
+      <p class="body" style="font-size:13px;margin-top:8px">
+        配置里写 <span class="mono" style="font-size:12px">threshold_ms: 1999</span>。固定版本按整数毫秒并用严格「&gt;」，
+        填 2000 会漏掉正好 2 秒的请求。
+      </p>
+    </div>
+
+    <div class="card a" style="--d:1s;padding:24px 24px">
+      <div style="display:flex;align-items:center;gap:9px">
+        <span class="dot" style="background:#0071e3"></span>
+        <span style="font-size:11px;letter-spacing:.12em;color:#a1a1a6">策略三</span>
+      </div>
+      <h3 style="font-size:17px;margin-top:10px">约 10% 概率命中</h3>
+      <p class="body" style="font-size:13px;margin-top:8px">
+        不是「每十条留一条」。每条 trace 独立按概率决定，短期有波动；普通成功请求本来就可能被丢弃。
+      </p>
+    </div>
+
+    <div class="card a" style="--d:1.1s;padding:24px 24px;background:#fafafa">
+      <div class="kicker" style="font-size:10px;color:var(--faint)">默认参数</div>
+      <div style="margin-top:12px;display:grid;grid-template-columns:auto 1fr;gap:6px 14px" class="mono">
+        <span style="font-size:11px;color:#86868b">decision_wait</span><span style="font-size:11px;color:#1d1d1f">60s</span>
+        <span style="font-size:11px;color:#86868b">num_traces</span><span style="font-size:11px;color:#1d1d1f">200000 / 分片</span>
+        <span style="font-size:11px;color:#86868b">max_trace_size</span><span style="font-size:11px;color:#1d1d1f">5 MiB</span>
+        <span style="font-size:11px;color:#86868b">decision_cache</span><span style="font-size:11px;color:#1d1d1f">30万 + 30万</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="a" style="--d:1.2s;margin-top:24px;padding:16px 22px;background:#f4f5f8;border-radius:12px;display:flex;gap:18px;align-items:center">
+    <span class="mono" style="font-size:11.5px;color:var(--ink);letter-spacing:.08em">注意</span>
+    <span class="body" style="font-size:15px">
+      尾采样只决定 <b>trace</b> 留不留。日志与指标走各自的 pipeline，不受采样影响 —— 所以「链路没了但日志还在」是正常现象。
+    </span>
+  </div>
+</section>
+
+<!-- ================= 09 指标发现 ================= -->
+<section class="slide" data-sec="指标发现">
+  <div class="kicker a" style="--d:.02s">Metrics Discovery</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px">指标：谁去抓，怎么保证不重复抓</h2>
+
+  <div style="display:grid;grid-template-columns:600px 1fr;gap:64px;margin-top:32px;align-items:start">
+    <svg viewBox="0 0 600 560" style="width:100%" fill="none">
+      <g class="a" style="--d:.2s">
+        <rect x="150" y="10" width="300" height="66" rx="14" fill="#fff" stroke="#1d1d1f" stroke-opacity=".2"/>
+        <text x="300" y="38" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="15" font-weight="600" fill="#1d1d1f">Target Allocator</text>
+        <text x="300" y="58" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#86868b">发现目标 + 一致性哈希分片</text>
+      </g>
+
+      <text x="0" y="126" font-family="SF Pro Text,sans-serif" font-size="10" letter-spacing="1.6" fill="#a1a1a6">抓取目标</text>
+      <g class="a" style="--d:.32s">
+        <rect x="0" y="140" width="140" height="44" rx="9" fill="#f4f6f9" stroke="#e2e3e9"/>
+        <text x="16" y="167" font-family="SF Mono,monospace" font-size="11" fill="#55555b">orders-api</text>
+        <rect x="0" y="196" width="140" height="44" rx="9" fill="#f4f6f9" stroke="#e2e3e9"/>
+        <text x="16" y="223" font-family="SF Mono,monospace" font-size="11" fill="#55555b">pay-api</text>
+        <rect x="0" y="252" width="140" height="44" rx="9" fill="#f4f6f9" stroke="#e2e3e9"/>
+        <text x="16" y="279" font-family="SF Mono,monospace" font-size="11" fill="#55555b">stock-api</text>
+        <rect x="0" y="308" width="140" height="44" rx="9" fill="#f4f6f9" stroke="#e2e3e9"/>
+        <text x="16" y="335" font-family="SF Mono,monospace" font-size="11" fill="#55555b">otelcol:8888</text>
+        <rect x="0" y="364" width="140" height="44" rx="9" fill="#f4f6f9" stroke="#e2e3e9"/>
+        <text x="16" y="391" font-family="SF Mono,monospace" font-size="11" fill="#55555b">operator:8443</text>
+      </g>
+
+      <g stroke="#0071e3" stroke-width="1.3" fill="none" opacity=".8">
+        <path d="M140 162 C186 162 186 196 208 200" pathLength="1" class="draw" style="--d:.5s"/>
+        <path d="M140 218 C186 218 186 212 208 212" pathLength="1" class="draw" style="--d:.55s"/>
+        <path d="M140 274 C186 274 186 230 208 224" pathLength="1" class="draw" style="--d:.6s"/>
+      </g>
+      <g stroke="#00a37a" stroke-width="1.3" fill="none" opacity=".8">
+        <path d="M140 330 C186 330 186 336 208 336" pathLength="1" class="draw" style="--d:.65s"/>
+        <path d="M140 386 C186 386 186 350 208 348" pathLength="1" class="draw" style="--d:.7s"/>
+      </g>
+
+      <g class="a" style="--d:.55s">
+        <rect x="208" y="182" width="248" height="62" rx="12" fill="#eaf3fe" stroke="#0071e3" stroke-opacity=".38"/>
+        <text x="228" y="208" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#0071e3">Scraper-0</text>
+        <text x="228" y="228" font-family="SF Mono,monospace" font-size="10" fill="#5b87b3">3 个目标</text>
+      </g>
+      <g class="a" style="--d:.62s">
+        <rect x="208" y="318" width="248" height="62" rx="12" fill="#e7f7f2" stroke="#00a37a" stroke-opacity=".38"/>
+        <text x="228" y="344" font-family="SF Pro Text,sans-serif" font-size="13.5" font-weight="600" fill="#00a37a">Scraper-1</text>
+        <text x="228" y="364" font-family="SF Mono,monospace" font-size="10" fill="#3f8a75">2 个目标</text>
+      </g>
+
+      <g stroke="#c9ccd4" stroke-width="1" stroke-dasharray="3 4" fill="none">
+        <path d="M250 76 L250 182"/>
+        <path d="M350 76 L350 318"/>
+      </g>
+      <text x="258" y="120" font-family="SF Mono,monospace" font-size="9.5" fill="#a1a1a6">分配</text>
+
+      <g class="a" style="--d:.8s">
+        <rect x="340" y="436" width="260" height="66" rx="14" fill="#fff" stroke="#1d1d1f" stroke-opacity=".2"/>
+        <text x="470" y="464" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="15" font-weight="600" fill="#1d1d1f">Gateway</text>
+        <text x="470" y="484" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#86868b">补全标签 · 统一出口</text>
+      </g>
+      <g stroke="#0071e3" stroke-width="1.5" marker-end="url(#arB)" fill="none">
+        <path d="M456 213 C492 213 492 400 470 436" pathLength="1" class="draw" style="--d:.95s"/>
+      </g>
+      <g stroke="#00a37a" stroke-width="1.5" marker-end="url(#arG2)" fill="none">
+        <path d="M456 349 C524 349 524 400 530 436" pathLength="1" class="draw" style="--d:1s"/>
+      </g>
+      <defs>
+        <marker id="arG2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="#00a37a"/>
+        </marker>
+      </defs>
+
+      <text x="340" y="530" font-family="SF Mono,monospace" font-size="10" fill="#a1a1a6">同一目标只会交给一个 Scraper</text>
+
+      <circle r="3.2" fill="#0071e3"><animateMotion dur="2.4s" repeatCount="indefinite" path="M140 162 C186 162 186 196 208 200"/></circle>
+      <circle r="3.2" fill="#00a37a"><animateMotion dur="2.4s" begin="-1.2s" repeatCount="indefinite" path="M140 330 C186 330 186 336 208 336"/></circle>
+      <circle r="3.2" fill="#00a37a"><animateMotion dur="2.6s" begin="-.6s" repeatCount="indefinite" path="M456 349 C524 349 524 400 530 436"/></circle>
+    </svg>
+
+    <div>
+      <div class="a" style="--d:.3s">
+        <h3 style="font-size:19px">为什么需要 TA</h3>
+        <p class="body" style="font-size:15px;margin-top:9px">
+          两个 Scraper 如果各自发现全部目标，同一份指标会被抓两遍，后端出现重复序列。
+          Target Allocator 把目标集合做一致性哈希，<b>每个目标只交给一个 Scraper</b>。
+        </p>
+      </div>
+      <div class="a" style="--d:.45s;margin-top:28px">
+        <h3 style="font-size:19px">发现什么</h3>
+        <p class="body" style="font-size:15px;margin-top:9px">
+          PodMonitor / ServiceMonitor / Probe / ScrapeConfig，加上平台自监控。只发现带
+          <span class="mono" style="font-size:13px">owner=otel</span> 标签的 Monitor，不会误抓别的团队的对象。
+        </p>
+      </div>
+      <div class="a" style="--d:.6s;margin-top:28px">
+        <h3 style="font-size:19px">指标标签必须补齐</h3>
+        <p class="body" style="font-size:15px;margin-top:9px">
+          把 Resource 属性按白名单复制到数据点：<span class="mono" style="font-size:12.5px">k8s_cluster_name、k8s_namespace_name、k8s_pod_name、k8s_container_name、service_name</span>。
+          否则不同 Pod 的同名指标会在后端被合并成一条时间序列。
+        </p>
+      </div>
+      <div class="a" style="--d:.75s;margin-top:28px;padding:16px 18px;background:#fdf3e6;border-radius:12px">
+        <p class="body" style="font-size:14px;color:#8a5a12">
+          已有 Prometheus 若也在全选 Monitor，新增的 Monitor 会被两边同时发现 —— 上线前必须先划清发现范围。
+        </p>
+      </div>
+      <div class="a" style="--d:.88s;margin-top:24px;padding-top:20px;border-top:1px solid var(--line2)">
+        <h3 style="font-size:19px">怎么验收</h3>
+        <p class="body" style="font-size:15px;margin-top:9px">
+          在后端按集群、namespace、Pod 查 <span class="mono" style="font-size:13px">up</span>，核对目标数量与副本数是否对得上；
+          再看一个真实业务指标的标签是否完整。<b>Pod Ready 与平台自监控有数据，都不能证明业务 Monitor 发现成功。</b>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 10 日志链路 ================= -->
+<section class="slide" data-sec="日志链路">
+  <div class="kicker a" style="--d:.02s">Logs Pipeline</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px">日志：从节点上的文件，到能点回链路</h2>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:36px">
+    <div class="card a" style="--d:.18s;padding:26px 24px">
+      <div class="mono" style="font-size:10px;color:var(--log);letter-spacing:.12em">STEP 01</div>
+      <h3 style="font-size:17px;margin-top:8px">读文件</h3>
+      <p class="body" style="font-size:13px;margin-top:8px">直接读宿主上的容器日志，含未压缩的轮转文件。</p>
+      <div class="mono pre" style="font-size:10px;color:#86868b;margin-top:12px;line-height:1.9">/var/log/pods/…/0.log
+含轮转 0.log.2026…
+排除 .gz / .tmp
+checkpoint → hostPath</div>
+    </div>
+    <div class="card a" style="--d:.3s;padding:26px 24px">
+      <div class="mono" style="font-size:10px;color:var(--log);letter-spacing:.12em">STEP 02</div>
+      <h3 style="font-size:17px;margin-top:8px">拆外层</h3>
+      <p class="body" style="font-size:13px;margin-top:8px">先剥掉 CRI 的时间与流标记，再还原被拆分的分片。</p>
+      <div class="mono pre" style="font-size:10px;color:#86868b;margin-top:12px;line-height:1.9">container parser
+还原 CRI P / F 分片
+区分 stdout / stderr
+补时间与流标记</div>
+    </div>
+    <div class="card a" style="--d:.42s;padding:26px 24px">
+      <div class="mono" style="font-size:10px;color:var(--log);letter-spacing:.12em">STEP 03</div>
+      <h3 style="font-size:17px;margin-top:8px">合多行</h3>
+      <p class="body" style="font-size:13px;margin-top:8px">默认不合并，避免把相邻的独立日志拼成一条。</p>
+      <div class="mono pre" style="font-size:10px;color:#86868b;margin-top:12px;line-height:1.9">默认不合并
+按 namespace / 容器
+单独开首行规则
+避免把独立日志拼错</div>
+    </div>
+    <div class="card a" style="--d:.54s;padding:26px 24px;background:#eaf3fe;border-color:#cfe3fa">
+      <div class="mono" style="font-size:10px;color:var(--trace);letter-spacing:.12em">STEP 04</div>
+      <h3 style="font-size:17px;margin-top:8px;color:#0059b3">提升关联 ID</h3>
+      <p class="body" style="font-size:13px;margin-top:8px;color:#2d5f8a">把日志里的 ID 变成原生字段，日志才能点回链路。</p>
+      <div class="mono pre" style="font-size:10px;color:#3d6b96;margin-top:12px;line-height:1.9">trace_id / span_id
+32 / 16 位 hex
++ level / timestamp
+不凭空造 ID</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:52px;margin-top:36px;align-items:start">
+    <div class="a" style="--d:.66s">
+      <div class="code" style="font-size:11.5px;line-height:1.85"><span class="c">// 推荐的单行 JSON</span>
+{
+  <span class="s">"timestamp"</span>: <span class="s">"2026-10-22T12:00:00.123+08:00"</span>,
+  <span class="s">"level"</span>: <span class="s">"ERROR"</span>,
+  <span class="s">"message"</span>: <span class="s">"inventory timeout"</span>,
+  <span class="s">"trace_id"</span>: <span class="g">"4bf92f35…4736"</span>,
+  <span class="s">"span_id"</span>: <span class="g">"00f067aa0ba902b7"</span>
+}</div>
+    </div>
+    <div>
+      <div class="a" style="--d:.78s">
+        <h3 style="font-size:18px">两次验收，别混为一谈</h3>
+        <p class="body" style="font-size:14.5px;margin-top:9px">
+          <b>① 能在后端查到日志</b> —— 证明采集通了。<br>
+          <b>② 点日志能跳到 trace</b> —— 证明 ID 被解析成原生字段，且那条 trace 没被采样丢弃。
+        </p>
+      </div>
+      <div class="a" style="--d:.9s;margin-top:20px;padding:16px 18px;background:#f4f5f8;border-radius:12px">
+        <p class="body" style="font-size:13.5px">
+          多行堆栈（Python traceback / Go panic）不能直接套日期首行规则，要先确认真实首行格式，
+          再按 namespace + 容器名开合并。采样丢弃后日志里仍会有合法 traceID，但点过去查不到链路 —— 这是正常边界。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <svg viewBox="0 0 1416 108" style="width:100%;margin-top:16px" fill="none">
+    <rect x="0" y="0" width="656" height="104" rx="12" fill="#1d1d1f"/>
+    <text x="22" y="30" font-family="SF Mono,monospace" font-size="10.5" fill="#a1a1a6">12:00:02.881  ERROR  inventory timeout</text>
+    <text x="22" y="56" font-family="SF Mono,monospace" font-size="10.5" fill="#8e8e93">trace_id=</text>
+    <text x="90" y="56" font-family="SF Mono,monospace" font-size="10.5" fill="#8ce99a">4bf92f3577b34da6a3ce929d0e0e4736</text>
+    <text x="22" y="82" font-family="SF Mono,monospace" font-size="10.5" fill="#8e8e93">span_id=</text>
+    <text x="90" y="82" font-family="SF Mono,monospace" font-size="10.5" fill="#8ce99a">00f067aa0ba902b7</text>
+    <rect x="84" y="42" width="352" height="19" rx="4" fill="#8ce99a" fill-opacity=".08"/>
+
+    <path d="M656 52 L716 52" stroke="#c9ccd4" stroke-width="1.3" marker-end="url(#ar3)" fill="none"/>
+    <defs>
+      <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="#b9bcc4"/>
+      </marker>
+    </defs>
+    <text x="662" y="40" font-family="SF Pro Text,sans-serif" font-size="10" fill="#a1a1a6">按 ID 查</text>
+
+    <rect x="734" y="0" width="682" height="104" rx="12" fill="#f4f6f9" stroke="#e2e3e9"/>
+    <text x="756" y="24" font-family="SF Pro Text,sans-serif" font-size="10" letter-spacing="1.4" fill="#a1a1a6">后端里同一条 TRACE</text>
+    <rect x="756" y="34" width="620" height="12" rx="6" fill="#0071e3" fill-opacity=".16"/>
+    <rect x="758" y="56" width="36" height="12" rx="6" fill="#0071e3" fill-opacity=".8"/>
+    <rect x="774" y="78" width="300" height="12" rx="6" fill="#0071e3" fill-opacity=".55"/>
+    <rect x="1110" y="78" width="180" height="12" rx="6" fill="#ff3b30" fill-opacity=".65"/>
+    <text x="1296" y="88" font-family="SF Mono,monospace" font-size="9" fill="#ff3b30">ERROR</text>
+  </svg>
+</section>
+
+<!-- ================= 11 部署 ================= -->
+<section class="slide" data-sec="部署">
+  <div class="kicker a" style="--d:.02s">Deployment · Step 1–4</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px;font-size:46px">部署：四条命令，一个维护窗口</h2>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:26px;margin-top:36px">
+    <div class="a" style="--d:.16s">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span class="num" style="font-size:36px;color:#1d1d1f">01</span>
+        <span style="font-size:14.5px;font-weight:600">准备</span>
+      </div>
+      <p class="body" style="font-size:13.5px;margin-top:10px">
+        确认 context、节点数、后端地址与认证；复制一份集群 values，真实凭据不提交 Git。
+      </p>
+    </div>
+    <div class="a" style="--d:.26s">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span class="num" style="font-size:36px;color:#1d1d1f">02</span>
+        <span style="font-size:14.5px;font-weight:600">装 Operator</span>
+      </div>
+      <p class="body" style="font-size:13.5px;margin-top:10px">
+        先查是否已有实例；没有才装。它负责 CRD、Webhook 与探针注入。
+      </p>
+    </div>
+    <div class="a" style="--d:.36s">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span class="num" style="font-size:36px;color:#1d1d1f">03</span>
+        <span style="font-size:14.5px;font-weight:600">装采集平台</span>
+      </div>
+      <p class="body" style="font-size:13.5px;margin-top:10px">
+        两个 values 一起加载：处理规则 + 集群参数。默认无 PVC，队列在内存。
+      </p>
+    </div>
+    <div class="a" style="--d:.46s">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span class="num" style="font-size:36px;color:#1d1d1f">04</span>
+        <span style="font-size:14.5px;font-weight:600">验收</span>
+      </div>
+      <p class="body" style="font-size:13.5px;margin-top:10px">
+        Helm 返回成功 ≠ 可用。逐个工作负载确认 Ready，再查三要素有没有真实数据。
+      </p>
+    </div>
+  </div>
+
+  <div class="code a" style="--d:.6s;margin-top:28px;font-size:11.5px;line-height:1.75;padding:20px 24px"><span class="c"># 01 准备</span>
+kubectl config get-contexts
+cp values-platform.yaml "$OTEL_VALUES"
+
+<span class="c"># 02 安装 Operator（先确认没有已有实例）</span>
+helm upgrade --install otel-operator ./charts/opentelemetry-operator-0.126.1.tgz \
+  --kube-context "$OTEL_CONTEXT" -n opentelemetry-operator-system \
+  --create-namespace -f values-operator.yaml --wait --timeout 10m
+
+<span class="c"># 03 安装采集平台</span>
+helm upgrade --install otel-platform ./charts/otel-platform-0.7.8.tgz \
+  --kube-context "$OTEL_CONTEXT" -n observability --create-namespace \
+  -f values-telemetry.yaml -f "$OTEL_VALUES" --wait --timeout 10m
+
+<span class="c"># 04 验收：Helm 成功之后还要逐个确认</span>
+kubectl -n observability get pods,pvc,instrumentations
+kubectl -n observability rollout status statefulset/otel-gateway-collector --timeout=5m</div>
+
+  <div class="a" style="--d:.78s;display:grid;grid-template-columns:1.4fr 1fr;gap:48px;margin-top:24px">
+    <div>
+      <div class="kicker" style="font-size:10px;color:var(--faint)">装完之后，集群里应该有</div>
+      <p class="body" style="font-size:13.5px;margin-top:8px">
+        Gateway ×2 · Sampler ×2 · Scraper ×2 · Cluster ×1 · Target Allocator ×1 · 每个 Linux 节点 1 个 Node Agent ·
+        两个 Instrumentation（standard / standard-prometheus）
+      </p>
+    </div>
+    <div>
+      <div class="kicker" style="font-size:10px;color:var(--faint)">存储开关</div>
+      <p class="body" style="font-size:13.5px;margin-top:8px">
+        <span class="mono" style="font-size:12.5px">persistent_queue: false</span> 为默认，不建 PVC；
+        切 <span class="mono" style="font-size:12.5px">true</span> 需排空队列、走维护窗口，不是普通滚动更新。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 12 业务接入 ================= -->
+<section class="slide" data-sec="业务接入">
+  <div class="kicker a" style="--d:.02s">Onboarding</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px;font-size:46px">接入一个 Java 服务：两行配置 + 四列验收</h2>
+
+  <div style="display:grid;grid-template-columns:640px 1fr;gap:56px;margin-top:36px;align-items:start">
+    <div>
+      <div class="a" style="--d:.2s">
+        <div class="kicker" style="font-size:10px;color:var(--faint)">合并进现有 Deployment 的关键字段</div>
+        <div class="code" style="margin-top:14px;font-size:11.5px;line-height:1.9"><span class="c"># Pod 模板 metadata.annotations</span>
+instrumentation.opentelemetry.io/inject-java:
+  <span class="g">observability/standard</span>
+instrumentation.opentelemetry.io/container-names:
+  <span class="g">app</span>
+
+<span class="c"># 容器 env</span>
+OTEL_SERVICE_NAME: <span class="s">orders-api</span>
+
+<span class="c"># 建议同时固定业务身份 label</span>
+app.kubernetes.io/name: <span class="s">orders-api</span></div>
+      </div>
+      <div class="a" style="--d:.42s;margin-top:18px;display:flex;gap:14px">
+        <div style="flex:1;padding:14px 16px;background:#f4f5f8;border-radius:11px">
+          <div class="mono" style="font-size:10px;color:#86868b">已有 /metrics</div>
+          <div class="body" style="font-size:13px;margin-top:5px">改用 standard-prometheus，关掉 SDK 指标只保留抓取</div>
+        </div>
+        <div style="flex:1;padding:14px 16px;background:#f4f5f8;border-radius:11px">
+          <div class="mono" style="font-size:10px;color:#86868b">只想要日志</div>
+          <div class="body" style="font-size:13px;margin-top:5px">打 label enabled: "true"，不注入探针</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="a" style="--d:.3s">
+        <div class="kicker" style="font-size:10px;color:var(--faint)">等 2–3 分钟（60s 采样窗 + 60s 指标周期）</div>
+        <table style="margin-top:14px">
+          <tr>
+            <td style="width:88px"><span class="dot" style="background:var(--trace)"></span> Trace</td>
+            <td style="font-size:14px">用 ERROR 日志里的 traceID 查到服务端 span，状态 ERROR；慢请求 ≥ 2s；跨服务父子关系完整</td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:var(--log)"></span> Logs</td>
+            <td style="font-size:14px">同一 traceID 查到日志，原生字段、级别、堆栈、时间、集群/服务/Pod 身份都对</td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:var(--metric)"></span> Metrics</td>
+            <td style="font-size:14px">JVM 与 HTTP 指标可查，count 随请求增长，耗时单位正确</td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:#1d1d1f"></span> 基础设施</td>
+            <td style="font-size:14px">节点 <span class="mono" style="font-size:12px">system_cpu_.*</span>、容器 <span class="mono" style="font-size:12px">k8s_container_.*</span>、集群 <span class="mono" style="font-size:12px">k8s_deployment_.*</span> 与平台 <span class="mono" style="font-size:12px">up</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="a" style="--d:.55s;margin-top:24px;padding:18px 20px;border:1px solid #e8e9ee;border-radius:13px">
+        <div style="font-size:14px;font-weight:600">分批推广</div>
+        <p class="body" style="font-size:13.5px;margin-top:7px">
+          先接一个可灰度的服务 → 三要素验收通过 → 再按业务域分批。
+          当前版本完成的是低流量 Java 验证，<b>不等于</b> 200 个服务峰值已验收。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="a" style="--d:.7s;margin-top:34px;padding-top:24px;border-top:1px solid var(--line2)">
+    <div class="kicker" style="font-size:10px;color:var(--faint)">接入最常见的四个坑 · 先查什么</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:26px;margin-top:14px">
+      <div>
+        <div class="mono" style="font-size:11px;color:#1d1d1f">没有 initContainer</div>
+        <p class="small" style="font-size:12.5px;margin-top:5px">annotation 放错层级、只改了旧 Pod、Webhook 未生效</p>
+      </div>
+      <div>
+        <div class="mono" style="font-size:11px;color:#1d1d1f">x509 证书错误</div>
+        <p class="small" style="font-size:12.5px;margin-top:5px">后端 / kubelet / Operator 三类 CA 不要混用，也别关校验</p>
+      </div>
+      <div>
+        <div class="mono" style="font-size:11px;color:#1d1d1f">Trace 查不到</div>
+        <p class="small" style="font-size:12.5px;margin-top:5px">可能真的被 10% 采样丢了；先看 SDK 是否生成、60s 窗口是否已过</p>
+      </div>
+      <div>
+        <div class="mono" style="font-size:11px;color:#1d1d1f">只有 Ready 没数据</div>
+        <p class="small" style="font-size:12.5px;margin-top:5px">Ready 只表示进程健康，要看出口错误、队列与三信号唯一标记</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 13 容量 ================= -->
+<section class="slide" data-sec="容量与资源">
+  <div class="kicker a" style="--d:.02s">Capacity</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px">容量：24 个节点，约 8.5 核 / 20.75 GiB</h2>
+
+  <div style="display:grid;grid-template-columns:1fr 500px;gap:60px;margin-top:40px;align-items:start">
+    <div class="a" style="--d:.18s">
+      <table>
+        <thead>
+          <tr><th>角色</th><th>数量</th><th>CPU req / limit</th><th>内存 req / limit</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Gateway</td><td class="mono">2</td><td class="mono">500m / 2</td><td class="mono">1024 / 2048 Mi</td><td>接入 · 补全 · 路由</td></tr>
+          <tr><td>Sampler</td><td class="mono">2</td><td class="mono">500m / 2</td><td class="mono">2048 / 4096 Mi</td><td>尾采样缓存最吃内存</td></tr>
+          <tr><td>Scraper</td><td class="mono">2</td><td class="mono">500m / 2</td><td class="mono">1024 / 2048 Mi</td><td>Prometheus 抓取</td></tr>
+          <tr><td>Cluster</td><td class="mono">1</td><td class="mono">500m / 2</td><td class="mono">512 / 1024 Mi</td><td>对象状态 · 事件</td></tr>
+          <tr><td>Node</td><td class="mono">N</td><td class="mono">200m / 2</td><td class="mono">512 / 1024 Mi</td><td>日志 · 宿主指标</td></tr>
+          <tr><td>Target Allocator</td><td class="mono">1</td><td class="mono">200m / 1</td><td class="mono">256 / 1024 Mi</td><td>目标发现</td></tr>
+          <tr><td>Operator</td><td class="mono">1</td><td class="mono">200m / 1</td><td class="mono">256 / 512 Mi</td><td>CRD · 注入</td></tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top:16px">
+        request 用于调度预算，limit 用于约束，都不是实测 RSS。不含业务探针与后端存储；
+        200 个服务不能直接换算成资源。
+      </p>
+
+      <svg viewBox="0 0 760 180" style="width:82%;margin-top:20px" fill="none">
+        <text x="0" y="10" font-family="SF Pro Text,sans-serif" font-size="10.5" letter-spacing="1.6" fill="#a1a1a6">单 POD 内存 LIMIT（MiB）</text>
+        <line x1="0" y1="140" x2="760" y2="140" stroke="#e8e9ee"/>
+
+        <g>
+          <rect x="10" y="90" width="58" height="50" rx="4" fill="#1d1d1f" fill-opacity=".18"/>
+          <rect x="10" y="90" width="58" height="50" rx="4" fill="#1d1d1f" fill-opacity=".55" class="grow" style="--d:.5s;transform-origin:bottom"/>
+          <text x="39" y="82" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#1d1d1f">2048</text>
+          <text x="39" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#86868b">Gateway</text>
+
+          <rect x="118" y="40" width="58" height="100" rx="4" fill="#0071e3" fill-opacity=".18"/>
+          <rect x="118" y="40" width="58" height="100" rx="4" fill="#0071e3" fill-opacity=".8"/>
+          <text x="147" y="32" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#0071e3">4096</text>
+          <text x="147" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#0071e3">Sampler</text>
+
+          <rect x="226" y="90" width="58" height="50" rx="4" fill="#1d1d1f" fill-opacity=".18"/>
+          <rect x="226" y="90" width="58" height="50" rx="4" fill="#1d1d1f" fill-opacity=".55"/>
+          <text x="255" y="82" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#1d1d1f">2048</text>
+          <text x="255" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#86868b">Scraper</text>
+
+          <rect x="334" y="115" width="58" height="25" rx="4" fill="#1d1d1f" fill-opacity=".18"/>
+          <rect x="334" y="115" width="58" height="25" rx="4" fill="#1d1d1f" fill-opacity=".5"/>
+          <text x="363" y="107" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#1d1d1f">1024</text>
+          <text x="363" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#86868b">Cluster</text>
+
+          <rect x="442" y="115" width="58" height="25" rx="4" fill="#1d1d1f" fill-opacity=".18"/>
+          <rect x="442" y="115" width="58" height="25" rx="4" fill="#1d1d1f" fill-opacity=".5"/>
+          <text x="471" y="107" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#1d1d1f">1024</text>
+          <text x="471" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#86868b">Node</text>
+
+          <rect x="550" y="115" width="58" height="25" rx="4" fill="#1d1d1f" fill-opacity=".18"/>
+          <rect x="550" y="115" width="58" height="25" rx="4" fill="#1d1d1f" fill-opacity=".5"/>
+          <text x="579" y="107" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#1d1d1f">1024</text>
+          <text x="579" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#86868b">TA</text>
+
+          <rect x="658" y="127" width="58" height="13" rx="4" fill="#1d1d1f" fill-opacity=".18"/>
+          <rect x="658" y="127" width="58" height="13" rx="4" fill="#1d1d1f" fill-opacity=".5"/>
+          <text x="687" y="119" text-anchor="middle" font-family="SF Mono,monospace" font-size="10" fill="#1d1d1f">512</text>
+          <text x="687" y="158" text-anchor="middle" font-family="SF Pro Text,sans-serif" font-size="10" fill="#86868b">Operator</text>
+        </g>
+      </svg>
+    </div>
+
+    <div>
+      <div class="a" style="--d:.3s;padding:26px;background:#fff;border:1px solid var(--line2);border-radius:16px">
+        <div class="kicker" style="font-size:10px">尾采样条数怎么算</div>
+        <div class="mono" style="font-size:14px;color:#1d1d1f;margin-top:12px">新 trace/s × 60s × 余量</div>
+        <p class="body" style="font-size:13px;margin-top:8px">
+          按<b>每个 Sampler</b> 的新 traceID 到达率算，同一条 trace 的多个服务 span 不能重复计入。
+        </p>
+        <div style="height:1px;background:var(--line2);margin:16px 0"></div>
+        <p class="body" style="font-size:13px">
+          4000 新 trace/s · 60s · 2 副本 · 1.5 倍余量 → 每副本需 <b>180,000</b> 条
+        </p>
+        <p class="body" style="font-size:13px;margin-top:8px">
+          当前 200,000 条 / 副本，压测在 6,405 trace/s 下内存 852 Mi / 4096 Mi。
+        </p>
+      </div>
+
+      <div class="a" style="--d:.44s;margin-top:20px;padding:20px 22px;background:#fdf3e6;border-radius:13px">
+        <div style="font-size:13.5px;font-weight:600;color:#8a5a12">队列容量不是磁盘上限</div>
+        <p class="body" style="font-size:13px;margin-top:7px;color:#8a5a12">
+          每个 exporter 256 MiB 逻辑容量。5 MiB/s 的日志入口只够约 51 秒；要扛 10 分钟，理论就得 3000 MiB 起。
+          恢复吞吐必须大于持续输入才追得平。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 14 边界 ================= -->
+<section class="slide" data-sec="边界">
+  <div class="kicker a" style="--d:.02s">Boundaries</div>
+  <h2 class="a" style="--d:.08s;margin-top:18px">说清楚：我们保证什么，不保证什么</h2>
+  <p class="body a" style="--d:.14s;margin-top:14px;max-width:920px">
+    可观测性平台最容易出问题的地方，不是采不到，而是<b>以为采到了</b>。
+  </p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:44px;margin-top:36px">
+    <div class="a" style="--d:.26s">
+      <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--line)">
+        <span class="dot" style="background:var(--metric)"></span>
+        <span style="font-size:15.5px;font-weight:600">平台负责保证</span>
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--line2)">
+        <div style="font-size:14.5px;font-weight:500">采集层的可用性</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">多副本 + 拓扑分布 + PDB，单副本故障不中断接入</p>
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--line2)">
+        <div style="font-size:14.5px;font-weight:500">身份与关联的正确性</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">K8s 元数据、服务名、trace/span 字段按真实语义补全，不造假</p>
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--line2)">
+        <div style="font-size:14.5px;font-weight:500">有界缓冲与背压</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">队列容量明确、满则背压而非静默丢弃，磁盘可观测</p>
+      </div>
+      <div style="padding:14px 0">
+        <div style="font-size:14.5px;font-weight:500">异常可被发现</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">自监控覆盖队列、丢弃、拒收、证书到期，规则随平台交付</p>
+      </div>
+    </div>
+
+    <div class="a" style="--d:.4s">
+      <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--line)">
+        <span class="dot" style="background:#ff3b30"></span>
+        <span style="font-size:15.5px;font-weight:600">需要业务 / 项目方确认</span>
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--line2)">
+        <div style="font-size:14.5px;font-weight:500">采样窗口内的数据</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">60 秒窗外的迟到 span 不承诺补回；待决 trace 在内存，重启即丢</p>
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--line2)">
+        <div style="font-size:14.5px;font-weight:500">业务自定义指标</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">annotation 推不出业务 Counter，必须代码里埋点</p>
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--line2)">
+        <div style="font-size:14.5px;font-weight:500">任意框架零代码可用</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">自动埋点只覆盖上游支持的库；MQ、异步、自建协议需回归</p>
+      </div>
+      <div style="padding:14px 0">
+        <div style="font-size:14.5px;font-weight:500">后端是否真的落库</div>
+        <p class="small" style="margin-top:3px;font-size:13.5px">HTTP 200 只代表被接收；部分成功、Bulk 内失败要按后端契约验</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="a" style="--d:.56s;margin-top:30px;padding:22px 26px;background:#1d1d1f;border-radius:15px">
+    <div style="font-size:10.5px;letter-spacing:.2em;color:#8e8e93">上线前必须做的一件事</div>
+    <div style="font-size:15px;color:#e8e8ed;line-height:1.65;margin-top:10px">
+      由项目负责人明确写下<b style="color:#fff">每条链路允许的数据缺口与恢复时间（RPO）</b>，并在测试环境演练一次：
+      后端 503、强制重建 Gateway / Sampler、磁盘接近满。演练结论写进验收报告。
+    </div>
+  </div>
+
+  <div class="a" style="--d:.7s;margin-top:26px;padding-top:20px;border-top:1px solid var(--line2);display:flex;justify-content:space-between;align-items:baseline">
+    <span class="small" style="font-size:13px">
+      以上边界都来自固定版本的实测结论 —— 换版本、换后端、换云环境，都需要重新验收。
+    </span>
+    <span class="mono" style="font-size:11px;color:var(--faint)">Chart 0.7.8 · Collector 0.163.2</span>
+  </div>
+</section>
+
+<!-- ================= 15 收尾 ================= -->
+<section class="slide cover" data-sec="下一步">
+  <svg class="cover-art" viewBox="0 0 900 900" fill="none" style="right:-270px;top:-40px;opacity:.8">
+    <defs>
+      <radialGradient id="eg1" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#00a37a" stop-opacity=".12"/>
+        <stop offset="100%" stop-color="#00a37a" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <circle cx="450" cy="450" r="420" fill="url(#eg1)"/>
+    <g class="spin-slow" style="transform-origin:450px 450px">
+      <circle cx="450" cy="450" r="300" stroke="#1d1d1f" stroke-opacity=".09" stroke-dasharray="1 12"/>
+    </g>
+    <circle cx="450" cy="450" r="180" stroke="#1d1d1f" stroke-opacity=".06"/>
+    <circle cx="450" cy="450" r="62" stroke="#00a37a" stroke-opacity=".3"/>
+  </svg>
+
+  <div class="cover-inner">
+    <div class="kicker a" style="--d:.05s">Next</div>
+    <h1 class="a" style="--d:.14s;margin-top:28px;font-size:74px">下一步，三步走</h1>
+
+    <div style="margin-top:48px;max-width:940px">
+      <div class="a" style="--d:.26s;display:flex;gap:24px;align-items:baseline;padding:20px 0;border-top:1px solid var(--line2)">
+        <span class="mono" style="font-size:10.5px;color:var(--faint);width:62px;letter-spacing:.1em">STEP 1</span>
+        <span style="font-size:19px;font-weight:500">在目标集群装好平台，跑通基础设施指标与自监控</span>
+      </div>
+      <div class="a" style="--d:.36s;display:flex;gap:24px;align-items:baseline;padding:20px 0;border-top:1px solid var(--line2)">
+        <span class="mono" style="font-size:10.5px;color:var(--faint);width:62px;letter-spacing:.1em">STEP 2</span>
+        <span style="font-size:19px;font-weight:500">接 1 个可灰度服务，三要素端到端验收</span>
+      </div>
+      <div class="a" style="--d:.46s;display:flex;gap:24px;align-items:baseline;padding:20px 0;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2)">
+        <span class="mono" style="font-size:10.5px;color:var(--faint);width:62px;letter-spacing:.1em">STEP 3</span>
+        <span style="font-size:19px;font-weight:500">按业务域分批接入，同步定容与告警阈值</span>
+      </div>
+    </div>
+
+    <p class="a" style="--d:.6s;margin-top:40px;font-size:15.5px;color:var(--muted);max-width:740px;line-height:1.7">
+      详细原理见《01-架构文档》，安装命令与参数见《02-部署文档》。<br>
+      两套文档与源码、values、打包产物一起交付，可独立复现。
+    </p>
+  </div>
+</section>
+
+<div class="chrome">
+  <div class="left">
+    <span id="sec">封面</span>
+    <div class="bar"><i id="prog"></i></div>
+  </div>
+  <div class="pg"><span id="cur">01</span> / 15</div>
+</div>
+
+</div>
+</div>
+
+<script>
+(function(){
+  const deck = document.getElementById('deck');
+  const slides = [...deck.querySelectorAll('.slide')];
+  const total = slides.length;
+  let i = 0;
+
+  document.getElementById('cur').textContent = String(total).padStart(2,'0');
+
+  function fit(){
+    const s = Math.min(window.innerWidth/1600, window.innerHeight/900) * 0.96;
+    deck.style.transform = 'scale('+s+')';
+  }
+  window.addEventListener('resize', fit); fit();
+
+  function show(n){
+    if(n<0||n>=total) return;
+    slides[i].removeAttribute('data-active');
+    i = n;
+    const el = slides[i];
+    el.setAttribute('data-active','');
+    document.getElementById('sec').textContent = el.dataset.sec || '';
+    document.getElementById('cur').textContent = String(i+1).padStart(2,'0');
+    document.getElementById('prog').style.transform = 'scaleX('+((i+1)/total)+')';
+    const hint = document.getElementById('hint');
+    if(hint) hint.style.opacity = i===0 ? 1 : 0;
+  }
+
+  document.addEventListener('keydown', e=>{
+    if(['ArrowRight','ArrowDown',' ','PageDown','Enter'].includes(e.key)){ e.preventDefault(); show(i+1); }
+    else if(['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(e.key)){ e.preventDefault(); show(i-1); }
+    else if(e.key==='Home'){ show(0); }
+    else if(e.key==='End'){ show(total-1); }
+  });
+
+  deck.addEventListener('click', e=>{
+    const r = deck.getBoundingClientRect();
+    if((e.clientX - r.left) > r.width*0.5) show(i+1); else show(i-1);
+  });
+
+  let x0=null;
+  deck.addEventListener('touchstart', e=>{ x0=e.touches[0].clientX; }, {passive:true});
+  deck.addEventListener('touchend', e=>{
+    if(x0===null) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    if(Math.abs(dx)>50) dx<0 ? show(i+1) : show(i-1);
+    x0=null;
+  }, {passive:true});
+
+  const p = new URLSearchParams(location.search).get('p');
+  if(new URLSearchParams(location.search).has('shot')) document.body.classList.add('shot');
+  show(p ? Math.max(0,Math.min(total-1,parseInt(p,10)-1)) : 0);
+})();
+</script>
+</body>
+</html>

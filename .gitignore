@@ -8,3 +8,4 @@ __pycache__/
 .workbuddy/
 .wbapp*
 site/
+new-dev集群验证/acceptance/results/
