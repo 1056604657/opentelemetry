@@ -1,16 +1,20 @@
+# Chart 完整默认值，供维护和高级覆盖；首次安装请复制根目录 values-platform.yaml，
+# 所有后端共用该入口，不需要复制本文件或选择其他场景模板。
+# [必填] 集群名称与三个真实写入口；[按需] 认证、私有 CA 和环境差异。
+# 以下未显式覆盖的参数自动继承；Collector 处理块属于高级配置。
 cluster_name: REPLACE_ME
+# [通常不改] 非生产环境需要时在集群 values 覆盖。
 environment: production
+# [按需] persistent_queue 为 true 时才需要 StorageClass；默认不创建 PVC。
 storage_class: ''
 # false: all Collectors use no PVC; OTLP/Kafka queues use memory and Node log checkpoints keep hostPath.
 # true: persist exporter queues; set storage_class before a fresh install.
 persistent_queue: false
 collector_image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.163.2
-gateway_topology: unified
 gateway_replicas: 2
-log_gateway_replicas: 2
 collector_memory_mib:
-  gateway: 2048
-  logs: 2048
+  # [通常不改] 统一原安装主线 4Gi 预算；旧裸 Chart 2Gi 用户升级时可显式覆盖。
+  gateway: 4096
   node: 1024
   cluster: 1024
   scraper: 2048
@@ -19,6 +23,7 @@ trace_endpoint: https://traces.invalid:4318
 log_endpoint: https://logs.invalid:4318
 metrics_protocol: otlp_http
 metrics_endpoint: https://metrics.invalid/api/v1/otlp
+# [按需] Kafka 连接参数只在 logs_transport: kafka 时生效；默认无需准备 Kafka。
 kafka_brokers:
 - kafka-0.invalid:9093
 - kafka-1.invalid:9093
@@ -35,6 +40,37 @@ secret_names:
 trace_protocol: otlp_http
 log_protocol: otlp_http
 backend_ca_file: ''
+# [按需] 厂商完整 HTTP 写入地址；普通 OTLP base URL 无需开启。
+backend_http:
+  traces:
+    endpoint_from_secret: false
+    allow_http: false
+  metrics:
+    endpoint_from_secret: false
+    allow_http: false
+  logs:
+    endpoint_from_secret: false
+    allow_http: false
+# [按需] 增强诊断默认关闭，按架构文档的增强诊断章节启用。
+diagnostics:
+  cadvisor:
+    enabled: false
+  apiserver:
+    enabled: false
+  kube_state_metrics:
+    enabled: false
+    target: kube-state-metrics.observability.svc:8080
+  host_process:
+    enabled: false
+    names:
+    - '^(kubelet|containerd|otelcol-contrib)$'
+# [按需] 自动伸缩默认关闭，按架构文档的自动伸缩章节启用。
+autoscaling:
+  gateway:
+    enabled: false
+    min_replicas: 2
+    max_replicas: 5
+    target_cpu_utilization: 70
 kafka_tls:
   min_version: '1.2'
 kafka_auth:
@@ -42,6 +78,7 @@ kafka_auth:
     mechanism: SCRAM-SHA-512
     username: ${env:KAFKA_USERNAME}
     password: ${env:KAFKA_PASSWORD}
+# [通常不改] 目标集群 kubelet CA/SAN 不匹配时，按架构文档的证书适配覆盖。
 kubelet_ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 kubelet_endpoint: https://${env:OTEL_NODE_IP}:10250
 image_pull_secrets: []
@@ -52,9 +89,6 @@ scraper_replicas: 2
 pvc_size: 10Gi
 collector_cpu:
   gateway:
-    request: 500m
-    limit: '2'
-  logs:
     request: 500m
     limit: '2'
   node:
@@ -94,6 +128,7 @@ otlp_max_recv_mib: 4
 filelog_max_log_size: 256KiB
 filelog_start_at: beginning
 exporter_batch_max_kib: 512
+# [高级] 通用日志处理规则；通常不修改。覆盖列表时必须保留所需的完整规则。
 log_processing:
   filelog:
     container:
@@ -328,6 +363,7 @@ log_processing:
     timezone: UTC
     layout: '%Y-%m-%d %H:%M:%S.%L'
 resource_attributes: {}
+# [高级] 通用 Trace 处理规则，通常不修改。
 trace_processing:
   drop_noise: false
   noise_filter:
@@ -377,6 +413,7 @@ trace_processing:
         where resource.attributes["service.name"] == nil and resource.attributes["k8s.deployment.name"]
         != nil
       - delete_matching_keys(resource.attributes, "^obs[.](pod|namespace)[.]")
+# [高级] 通用指标处理和身份标签，通常不修改。
 metrics_processing:
   hostmetrics:
     collection_interval: 30s
@@ -518,6 +555,7 @@ metrics_processing:
 trace_headers: {}
 log_headers: {}
 metrics_headers: {}
+# [通常不改] 自监控已开启；不要为了省去 CA 配置关闭生产自监控。
 operator_metrics:
   enabled: true
   namespace: opentelemetry-operator-system
@@ -528,13 +566,9 @@ operator_metrics:
 kafka_metrics:
   enabled: false
   collection_interval: 30s
+# [按需] 专用节点、污点或优先级；普通 Linux 节点无需更改。
 scheduling:
   gateway:
-    nodeSelector:
-      kubernetes.io/os: linux
-    tolerations: []
-    priorityClassName: ''
-  logs:
     nodeSelector:
       kubernetes.io/os: linux
     tolerations: []
@@ -569,7 +603,7 @@ logs_transport: direct
 log_export_consumers: 4
 log_batch_size: 8192
 log_batch_timeout: 1s
-sampler_replicas: 2
+sampler_replicas: 3
 monitor_resources_enabled: true
 scrape_jobs: []
 log_namespaces: []
@@ -588,11 +622,11 @@ aws_sigv4:
 # 200 微服务按 20 QPS/服务 = 4000 traces/s：4000x30/2x1.5 = 90000；取 200000 后实测
 # 6405 traces/s 健康（保留率与策略精确一致，sampler 内存 852Mi/4096Mi）。
 # decision_cache 同数量级；内存估算约 1.5KB x 5 spans x 待决数，200k 上限约需 1.5GiB/副本。
-# 本默认值与 values-telemetry.yaml 保持一致；生效值始终以 -f values-telemetry.yaml 为准。
-# 0.7.6 默认等待 60s；4000 x 60 / 2 x 1.5 = 180000，现有 200000 条/副本满足数量预算。
-# 上述历史吞吐验证使用 30s；60s 的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
+# [高级] 尾采样已内置；按实际新 trace 速率、窗口和内存调整，集群 values 可覆盖。
+# 当前默认等待 30s；4000 x 30 / 2 x 1.5 = 90000，现有 200000 条/副本满足数量预算。
+# 上述历史吞吐验证使用 30s；当前配置的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
 tail_sampling:
-  decision_wait: 60s
+  decision_wait: 30s
   num_traces: 200000
   expected_new_traces_per_sec: 0
   maximum_trace_size_bytes: 5242880
@@ -612,6 +646,6 @@ tail_sampling:
   - name: baseline
     type: probabilistic
     probabilistic:
-      sampling_percentage: 10
+      sampling_percentage: 1
 
 service_account_annotations: {}

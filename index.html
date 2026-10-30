@@ -161,7 +161,7 @@ body.shot .chrome,body.shot .hint{display:none}
       Trace、Metrics、Logs 三要素，<br>是如何被自动采集、关联并送进后端的。
     </p>
     <div class="meta a" style="--d:.4s">
-      <div>平台版本<b>0.7.8</b></div>
+      <div>平台版本<b>0.7.10</b></div>
       <div>Collector<b>Contrib 0.163.2</b></div>
       <div>Operator<b>0.161.0</b></div>
       <div>探针<b>Java / Python / Node.js</b></div>
@@ -1171,9 +1171,9 @@ helm upgrade --install otel-operator ./charts/opentelemetry-operator-0.126.1.tgz
   --create-namespace -f values-operator.yaml --wait --timeout 10m
 
 <span class="c"># 03 安装采集平台</span>
-helm upgrade --install otel-platform ./charts/otel-platform-0.7.8.tgz \
+helm upgrade --install otel-platform ./charts/otel-platform-0.7.10.tgz \
   --kube-context "$OTEL_CONTEXT" -n observability --create-namespace \
-  -f values-telemetry.yaml -f "$OTEL_VALUES" --wait --timeout 10m
+  -f "$OTEL_VALUES" --wait --timeout 10m
 
 <span class="c"># 04 验收：Helm 成功之后还要逐个确认</span>
 kubectl -n observability get pods,pvc,instrumentations
@@ -1450,7 +1450,7 @@ app.kubernetes.io/name: <span class="s">orders-api</span></div>
     <span class="small" style="font-size:13px">
       以上边界都来自固定版本的实测结论 —— 换版本、换后端、换云环境，都需要重新验收。
     </span>
-    <span class="mono" style="font-size:11px;color:var(--faint)">Chart 0.7.8 · Collector 0.163.2</span>
+    <span class="mono" style="font-size:11px;color:var(--faint)">Chart 0.7.10 · Collector 0.163.2</span>
   </div>
 </section>
 

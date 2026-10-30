@@ -1,4 +1,7 @@
-{{- range $object := (.Files.Get (printf "files/foundation-%s.yaml" .Values.gateway_topology) | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray) }}
+{{- range $object := (.Files.Get "files/foundation.yaml" | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray) }}
+{{- if and $.Values.diagnostics.cadvisor.enabled (eq $object.kind "ClusterRole") (eq $object.metadata.name (printf "%s-otel-node" $.Release.Namespace)) -}}
+{{- $_ := set $object "rules" (append $object.rules (dict "apiGroups" (list "") "resources" (list "nodes/metrics") "verbs" (list "get"))) -}}
+{{- end -}}
 {{- if eq $object.kind "ServiceAccount" -}}{{- $_ := set $object "imagePullSecrets" $.Values.image_pull_secrets -}}{{- $annotations := index $.Values.service_account_annotations $object.metadata.name | default dict -}}
 {{- if $annotations -}}{{- $_ := set $object.metadata "annotations" $annotations -}}{{- end -}}
 {{- end }}

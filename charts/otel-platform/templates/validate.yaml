@@ -2,7 +2,7 @@
   {{- $storage := required "storage_class required for persistent queues" .Values.storage_class -}}
   {{- if contains "REPLACE_ME" $storage -}}{{- fail "storage_class still contains example/unpinned value" -}}{{- end -}}
 {{- end -}}
-{{- range $key := list "cluster_name" "environment" "collector_image" "trace_endpoint" "metrics_endpoint" "log_endpoint" "java_image" "python_image" "nodejs_image" "target_allocator_image" -}}
+{{- range $key := list "cluster_name" "environment" "collector_image" "java_image" "python_image" "nodejs_image" "target_allocator_image" -}}
   {{- $value := required (printf "%s required" $key) (index $.Values $key) -}}
   {{- if or (contains ".invalid" $value) (contains "REPLACE_ME" $value) (contains ":latest" $value) -}}
     {{- fail (printf "%s still contains example/unpinned value" $key) -}}
@@ -37,14 +37,31 @@
   {{- $key := printf "%s_endpoint" $signal -}}
   {{- $url := index $.Values $key -}}
   {{- $protocol := index $.Values (printf "%s_protocol" $signal) -}}
-  {{- if eq $protocol "otlp_grpc" -}}
+  {{- $plural := index (dict "trace" "traces" "log" "logs" "metrics" "metrics") $signal -}}
+  {{- $http := index $.Values.backend_http $plural -}}
+  {{- if $http.endpoint_from_secret -}}
+    {{- if ne $protocol "otlp_http" -}}{{- fail "endpoint_from_secret requires otlp_http" -}}{{- end -}}
+    {{- if $.Values.credentials.create -}}
+      {{- $secretKey := printf "%s_ENDPOINT" (upper $plural) -}}
+      {{- include "otel.validateHTTP" (dict "key" $secretKey "url" (index $.Values.credentials.backends $secretKey) "allow_http" $http.allow_http) -}}
+    {{- end -}}
+  {{- else if eq $protocol "otlp_grpc" -}}
+    {{- $url = required (printf "%s required" $key) $url -}}
+    {{- if or (contains ".invalid" $url) (contains "REPLACE_ME" $url) -}}{{- fail (printf "%s still contains example value" $key) -}}{{- end -}}
     {{- if or (not (regexMatch "^[^/@]+:[0-9]+$" $url)) (contains "://" $url) -}}{{- fail (printf "%s for otlp_grpc requires host:port without a URL scheme" $key) -}}{{- end -}}
   {{- else -}}
-    {{- if or (not (hasPrefix "https://" $url)) (contains "@" $url) -}}{{- fail (printf "%s requires HTTPS without embedded credentials" $key) -}}{{- end -}}
+    {{- include "otel.validateHTTP" (dict "key" $key "url" $url "allow_http" $http.allow_http) -}}
     {{- if and (eq $protocol "otlp_http") (regexMatch "/v1/(traces|logs|metrics)/?([?].*)?$" $url) -}}{{- fail (printf "%s needs OTLP base URL without signal path" $key) -}}{{- end -}}
   {{- end -}}
 {{- end -}}
 {{- if and (eq .Values.logs_transport "direct") .Values.kafka_metrics.enabled -}}{{- fail "kafka_metrics requires logs_transport=kafka" -}}{{- end -}}
+{{- range $role, $a := .Values.autoscaling -}}
+  {{- if and $a.enabled (gt (int $a.min_replicas) (int $a.max_replicas)) -}}{{- fail (printf "autoscaling.%s min_replicas must not exceed max_replicas" $role) -}}{{- end -}}
+{{- end -}}
+{{- if and .Values.diagnostics.cadvisor.enabled (not (hasPrefix "https://" .Values.kubelet_endpoint)) -}}{{- fail "cadvisor requires HTTPS kubelet_endpoint" -}}{{- end -}}
+{{- range $job := .Values.scrape_jobs -}}
+  {{- if or (and $.Values.diagnostics.apiserver.enabled (eq $job.job_name "diagnostics-apiserver")) (and $.Values.diagnostics.kube_state_metrics.enabled (eq $job.job_name "diagnostics-kube-state-metrics")) -}}{{- fail "scrape_jobs uses reserved diagnostic job_name" -}}{{- end -}}
+{{- end -}}
 {{- if and (not .Values.monitor_resources_enabled) .Values.businessPodMonitors -}}{{- fail "businessPodMonitors requires monitor_resources_enabled=true" -}}{{- end -}}
 {{- if .Values.aws_sigv4.enabled -}}
  {{- if ne .Values.metrics_protocol "prometheus_remote_write" -}}{{- fail "aws_sigv4 requires metrics_protocol=prometheus_remote_write" -}}{{- end -}}

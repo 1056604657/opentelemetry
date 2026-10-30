@@ -1,5 +1,7 @@
+# [固定安装预设] 直接用于 Operator 安装，无需复制或编辑。
 # OpenTelemetry Operator：只管理控制器、Webhook 和注入能力。
-# Collector 的 PVC 开关位于 values-platform.yaml，本文件无需配置存储。
+# Collector 的 PVC 开关按需写入本集群 values，本文件无需配置存储。
+# 私有镜像等环境差异另用覆盖文件；不要修改官方 Operator 安装包。
 
 # 1. 控制器副本和维护保护
 replicaCount: 1

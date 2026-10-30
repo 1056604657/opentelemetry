@@ -3,7 +3,7 @@
 {{- $kafkaGroup := default (printf "otel.%s.log-gateway.v1" .Values.cluster_name) .Values.kafka_group -}}
 {{- $operatorCA := include "otel.operatorCA" . -}}
 {{- $fileProtocol := ternary "prometheus_remote_write" "otlp_http" (eq .Values.metrics_protocol "prometheus_remote_write") -}}
-{{- $file := printf "files/collectors-%s-%s.yaml" .Values.gateway_topology $fileProtocol -}}
+{{- $file := printf "files/collectors-%s.yaml" $fileProtocol -}}
 {{- $objects := .Files.Get $file | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray -}}
 {{- $gateway := dict -}}
 {{- range $o := $objects -}}{{- if eq $o.metadata.name "otel-gateway" -}}{{- $gateway = deepCopy $o -}}{{- end -}}{{- end -}}
@@ -78,15 +78,14 @@
 {{- if eq $root.Values.logs_transport "direct" -}}
   {{- if or (eq $name "otel-node") (eq $name "otel-cluster") -}}
     {{- $exporter := deepCopy (index $spec.config.exporters "otlp/metrics") -}}
-    {{- $host := ternary "otel-logs" "otel-gateway" (eq $root.Values.gateway_topology "dual") -}}
-    {{- $_ := set $exporter "endpoint" (printf "%s-collector.%s.svc:4317" $host $root.Release.Namespace) -}}
+    {{- $_ := set $exporter "endpoint" (printf "otel-gateway-collector.%s.svc:4317" $root.Release.Namespace) -}}
     {{- $_ := set $spec.config.exporters "otlp/logs" $exporter -}}
     {{- $_ := unset $spec.config.exporters "kafka" -}}
     {{- range $id, $pipe := $spec.config.service.pipelines -}}
       {{- if hasPrefix "logs" $id -}}{{- $_ := set $pipe "exporters" (list "otlp/logs") -}}{{- end -}}
     {{- end -}}
   {{- end -}}
-  {{- if or (eq $name "otel-logs") (and (eq $name "otel-gateway") (eq $root.Values.gateway_topology "unified")) -}}
+  {{- if eq $name "otel-gateway" -}}
     {{- $_ := unset $spec.config.receivers "kafka" -}}
     {{- $_ := set $spec.config.receivers "otlp" (deepCopy $gateway.spec.config.receivers.otlp) -}}
     {{- $_ := set $spec.config.service.pipelines.logs "receivers" (list "otlp") -}}
@@ -96,14 +95,7 @@
     {{- $_ := set $spec.config.processors "batch/logs" (dict "send_batch_size" (int $root.Values.log_batch_size) "send_batch_max_size" (mul (int $root.Values.log_batch_size) 2) "timeout" $root.Values.log_batch_timeout) -}}
     {{- $_ := set (index $spec.config.service.pipelines "logs") "processors" (append (index (index $spec.config.service.pipelines "logs") "processors") "batch/logs") -}}
   {{- end -}}
-    {{- if eq $name "otel-logs" -}}
-      {{- $_ := set $spec "mode" "statefulset" -}}
-      {{- range $key := list "volumes" "volumeMounts" "volumeClaimTemplates" "persistentVolumeClaimRetentionPolicy" "podSecurityContext" -}}
-        {{- $_ := set $spec $key (deepCopy (index $gateway.spec $key)) -}}
-      {{- end -}}
-      {{- $_ := set $spec.config.extensions "file_storage" (deepCopy $gateway.spec.config.extensions.file_storage) -}}
-      {{- $_ := set $spec.config.service "extensions" (list "health_check" "file_storage") -}}
-    {{- end -}}
+
   {{- end -}}
 {{- end -}}
 {{- if or (eq $root.Values.logs_transport "direct") (eq $name "otel-sampler") -}}
@@ -184,9 +176,9 @@
   {{- $_ := set $claim.spec.resources.requests "storage" $root.Values.pvc_size -}}
 {{- end -}}
 {{- if eq $name "otel-gateway" -}}{{- $_ := set $spec "replicas" $root.Values.gateway_replicas -}}{{- end -}}
-{{- if eq $name "otel-logs" -}}{{- $_ := set $spec "replicas" $root.Values.log_gateway_replicas -}}{{- end -}}
 {{- if eq $name "otel-scraper" -}}{{- $_ := set $spec "replicas" $root.Values.scraper_replicas -}}{{- end -}}
 {{- if eq $name "otel-sampler" -}}{{- $_ := set $spec "replicas" $root.Values.sampler_replicas -}}{{- end -}}
+{{- include "otel.autoscaling" (dict "root" $root "spec" $spec "role" $role) -}}
 {{- if and (hasKey $spec "replicas") (eq (int $spec.replicas) 1) -}}
   {{- $_ := set $spec "podDisruptionBudget" (dict "minAvailable" 0) -}}
 {{- end -}}
@@ -253,7 +245,14 @@
     {{- $_ := set $exporter.http "endpoint" $root.Values.metrics_endpoint -}}
     {{- $_ := set $exporter.http "headers" (mergeOverwrite $exporter.http.headers ($root.Values.metrics_headers | default dict)) -}}
   {{- end -}}
-  {{- if hasPrefix "otlp_http/" $id -}}{{- $_ := set $exporter.tls "ca_file" $root.Values.backend_ca_file -}}{{- end -}}
+  {{- if hasPrefix "otlp_http/" $id -}}
+    {{- $_ := set $exporter.tls "ca_file" $root.Values.backend_ca_file -}}
+    {{- $signal := trimPrefix "otlp_http/" $id -}}
+    {{- if (index $root.Values.backend_http $signal).endpoint_from_secret -}}
+      {{- $_ := unset $exporter "endpoint" -}}
+      {{- $_ := set $exporter (printf "%s_endpoint" $signal) (printf "${env:%s_ENDPOINT}" (upper $signal)) -}}
+    {{- end -}}
+  {{- end -}}
   {{- if eq $id "prometheus_remote_write" -}}{{- $_ := set $exporter.http.tls "ca_file" $root.Values.backend_ca_file -}}{{- end -}}
 {{- end -}}
 {{- range $signal := list "traces" "logs" "metrics" -}}
@@ -297,6 +296,7 @@
   {{- $_ := set $spec.targetAllocator.prometheusCR "probeNamespaceSelector" $root.Values.monitor_namespace_selector -}}
   {{- $_ := set $spec.targetAllocator.prometheusCR "scrapeConfigNamespaceSelector" $root.Values.monitor_namespace_selector -}}
 {{- end -}}
+{{- include "otel.diagnostics" (dict "root" $root "spec" $spec "name" $name) -}}
 {{- if not $root.Values.persistent_queue -}}
   {{- range $exporter := $spec.config.exporters -}}
     {{- if hasKey $exporter "sending_queue" -}}{{- $_ := unset $exporter.sending_queue "storage" -}}{{- end -}}

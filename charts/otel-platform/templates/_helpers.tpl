@@ -11,3 +11,15 @@
   {{- $ca -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "otel.autoscaling" -}}
+{{- if hasKey .root.Values.autoscaling .role -}}
+  {{- $a := index .root.Values.autoscaling .role -}}
+  {{- if $a.enabled -}}
+    {{- $down := dict "selectPolicy" "Disabled" -}}
+    {{- $_ := set .spec "autoscaler" (dict "minReplicas" $a.min_replicas "maxReplicas" $a.max_replicas "targetCPUUtilization" $a.target_cpu_utilization "behavior" (dict "scaleDown" $down "scaleUp" (dict "stabilizationWindowSeconds" 60 "policies" (list (dict "type" "Percent" "value" 100 "periodSeconds" 60))))) -}}
+    {{- /* HPA targets the Collector CR; Helm must stop managing its replicas field. */ -}}
+    {{- $_ := unset .spec "replicas" -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
