@@ -23,6 +23,10 @@
 {{- $name := $object.metadata.name -}}
 {{- $spec := $object.spec -}}
 {{- if eq $name "otel-node" -}}
+  {{- /* CRI partial records can split a UTF-8 character; preserve bytes until recombination. */ -}}
+  {{- $_ := set $spec.config.receivers.filelog "encoding" "utf-8-raw" -}}
+  {{- /* A space at the end of a partial CRI record belongs to the message, not the frame. */ -}}
+  {{- $_ := set $spec.config.receivers.filelog "preserve_trailing_whitespaces" true -}}
   {{- $_ := set $spec.config.receivers.filelog "operators" (list
       (deepCopy $root.Values.log_processing.filelog.container)
       (deepCopy $root.Values.log_processing.filelog.source)
@@ -194,6 +198,11 @@
   {{- if eq $id "otlp" -}}
     {{- $_ := set $receiver.protocols.grpc "max_recv_msg_size_mib" (int $root.Values.otlp_max_recv_mib) -}}
     {{- $_ := set $receiver.protocols.http "max_request_body_size" (mul (int $root.Values.otlp_max_recv_mib) 1048576) -}}
+    {{- if eq $name "otel-gateway" -}}
+      {{- /* Renew ClusterIP connections so newly added Gateways receive existing clients' traffic. */ -}}
+      {{- $_ := set $receiver.protocols.grpc "keepalive" (dict "server_parameters" (dict "max_connection_age" "60s" "max_connection_age_grace" "30s")) -}}
+      {{- $_ := set $receiver.protocols.http "keepalive" (dict "enabled" false) -}}
+    {{- end -}}
   {{- end -}}
   {{- if eq $id "filelog" -}}
     {{- $_ := set $receiver "max_log_size" $root.Values.filelog_max_log_size -}}

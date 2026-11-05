@@ -10,6 +10,6 @@
 
 默认无 PVC，日志直发，Kafka、增强诊断和 HPA 关闭。需要时在同一份集群配置中开启；自建 Kafka 和云 Kafka 使用相同接入参数。高级说明集中在 [01-架构文档.md](01-架构文档.md)，不用复制其他场景文件。
 
-本项目安装采集和处理层，三个后端写入口需先具备。当前平台包为 `charts/otel-platform-0.7.10.tgz`，官方 Operator 包为 `charts/opentelemetry-operator-0.126.1.tgz`。`charts/otel-platform/` 是维护源码，安装使用现成包，无需生成脚本。
+本项目安装采集和处理层，三个后端写入口需先具备。当前平台包为 `charts/otel-platform-0.7.11.tgz`，官方 Operator 包为 `charts/opentelemetry-operator-0.126.1.tgz`。`charts/otel-platform/` 是维护源码，安装使用现成包，无需生成脚本。
 
-原有长 UTF-8 日志完整性风险仍未修复；验证范围见[当前验收状态](01-架构文档.md#当前验收状态)。已有集群继续使用原 local values，升级前看[兼容说明](01-架构文档.md#升级兼容)。
+0.7.11 修正 CRI 分片的 UTF-8 解码，并调整 Gateway 连接释放策略；验证范围见[当前验收状态](01-架构文档.md#当前验收状态)。已有集群继续使用原 local values，升级前看[兼容说明](01-架构文档.md#升级兼容)。
