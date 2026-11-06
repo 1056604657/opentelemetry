@@ -23,3 +23,43 @@ credentials:
 # 默认无 PVC、日志直发；Kafka、增强诊断和 HPA 关闭。
 # 私有 CA、私仓、Kafka 等参数按需写入本文件，见 01-架构文档.md；不用再叠加其他模板。
 # 真实配置复制为 values-<集群名>.local.yaml 保存，不提交或分享凭据。
+
+# [常用] 下列值与 Chart 默认值一致；修改前按实际流量和节点预算核算。
+gateway_replicas: 2
+scraper_replicas: 2
+sampler_replicas: 3  # 变更会影响 traceID 分片，不能直接跟随 Gateway HPA。
+filelog_max_log_size: 256KiB  # 同步控制读取、CRI 重组和应用多行合并。
+filelog_start_at: beginning  # 首次发现会补读仍在磁盘的历史文件。
+exporter_queue_mib: 256      # 每实例、每出口逻辑容量，不是整个 Pod 内存。
+otlp_max_recv_mib: 4         # 必须容纳单条日志及至少 64KiB 元数据余量。
+persistent_queue: false
+storage_class: ''
+pvc_size: 10Gi
+
+# [按需] 独立 requests/limits；未填写的字段继承 Chart 旧资源预算。
+# memory limit 同步更新 memory_limiter/GOMEMLIMIT；request 必须 <= limit。
+collector_resources: {}
+# collector_resources:
+#   gateway:
+#     requests: {cpu: 500m, memory: 1Gi}
+#     limits: {cpu: '2', memory: 4Gi}
+# 其他角色：node / cluster / scraper / sampler。调度使用 scheduling.<角色>。
+
+# [按需] 诊断覆盖：容器限流/内存/OOM/IO，API Server，KSM 对象状态，主机进程。
+# 先复用现有 KSM；metric_names 白名单与进程 names/metrics 可在同一份文件覆盖。
+diagnostics:
+  cadvisor: {enabled: false}
+  apiserver: {enabled: false}
+  kube_state_metrics:
+    enabled: false
+    target: kube-state-metrics.observability.svc:8080
+  host_process: {enabled: false}
+
+# [按需] 需要已有 metrics.k8s.io；CPU 利用率以最终 request 为分母。
+# 只自动扩容；关闭 HPA 或人工缩容前先排空队列。
+autoscaling:
+  gateway:
+    enabled: false
+    min_replicas: 2
+    max_replicas: 5
+    target_cpu_utilization: 70

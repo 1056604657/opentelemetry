@@ -55,15 +55,52 @@ backend_http:
 diagnostics:
   cadvisor:
     enabled: false
+    metric_names:
+    - container_cpu_cfs_(periods_total|throttled_periods_total|throttled_seconds_total)
+    - container_memory_(working_set_bytes|rss|cache|usage_bytes)
+    - container_oom_events_total
+    - container_fs_(reads_bytes_total|writes_bytes_total|io_time_seconds_total)
+    - container_network_(receive|transmit)_(bytes_total|errors_total|packets_dropped_total)
   apiserver:
     enabled: false
+    metric_names:
+    - apiserver_request_total
+    - apiserver_request_duration_seconds_(bucket|sum|count)
+    - apiserver_current_inflight_requests
+    - apiserver_longrunning_requests
+    - apiserver_storage_objects
+    - apiserver_admission_(controller|webhook)_admission_duration_seconds_(bucket|sum|count)
   kube_state_metrics:
     enabled: false
     target: kube-state-metrics.observability.svc:8080
+    metric_names:
+    - kube_pod_container_status_(last_terminated_reason|terminated_reason|waiting_reason|restarts_total|ready)
+    - kube_pod_status_(unschedulable|phase)
+    - kube_pod_container_resource_(requests|limits)
+    - kube_horizontalpodautoscaler_(spec_min_replicas|spec_max_replicas|status_current_replicas|status_desired_replicas)
+    - kube_job_status_(failed|succeeded|active)
+    - kube_deployment_(spec_replicas|status_replicas_available|status_replicas_unavailable)
+    - kube_statefulset_(replicas|status_replicas_ready|status_replicas_current|status_replicas_updated)
+    - kube_daemonset_status_(desired_number_scheduled|number_available|number_unavailable|number_misscheduled)
+    - kube_persistentvolumeclaim_status_phase
+    - kube_node_status_condition
   host_process:
     enabled: false
     names:
     - '^(kubelet|containerd|otelcol-contrib)$'
+    metrics:
+      process.cpu.utilization:
+        enabled: true
+      process.memory.utilization:
+        enabled: true
+      process.threads:
+        enabled: true
+      process.paging.faults:
+        enabled: true
+      process.memory.usage:
+        enabled: true
+      process.disk.io:
+        enabled: true
 # [按需] 自动伸缩默认关闭，按架构文档的自动伸缩章节启用。
 autoscaling:
   gateway:
@@ -103,6 +140,10 @@ collector_cpu:
   sampler:
     request: 500m
     limit: '2'
+# [按需] 原生 requests/limits 覆盖，优先于 collector_memory_mib / collector_cpu。
+# memory 支持字节及 Ki/Mi/Gi/Ti/k/M/G/T；CPU 支持核数或整数 m。
+# 未覆盖字段保留旧值；limiter/GOMEMLIMIT 始终按最终 memory limit 计算。
+collector_resources: {}
 otlp_namespace_selector: {}
 monitor_namespace_selector: {}
 businessPodMonitors: []
@@ -126,6 +167,7 @@ rollout_revision: ''
 exporter_queue_mib: 256
 otlp_max_recv_mib: 4
 filelog_max_log_size: 256KiB
+# filelog、container CRI 重组、应用 recombine 共用上述上限；不单独覆盖内部 max_log_size。
 filelog_start_at: beginning
 exporter_batch_max_kib: 512
 # [高级] 通用日志处理规则；通常不修改。覆盖列表时必须保留所需的完整规则。

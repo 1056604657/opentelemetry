@@ -1,0 +1,24 @@
+http:
+  endpoint: https://metrics.invalid/api/v1/otlp
+  tls:
+    ca_file: /etc/otel/trust/backend-ca.crt
+    min_version: '1.2'
+  headers:
+    Authorization: ${env:METRICS_AUTHORIZATION}
+retry_on_failure:
+  enabled: true
+  initial_interval: 1s
+  max_interval: 30s
+  max_elapsed_time: 0s
+remote_write_queue:
+  enabled: true
+  queue_size: 1000
+  num_consumers: 1
+max_batch_size_bytes: 1048576
+max_batch_request_parallelism: 1
+wal:
+  directory: /var/lib/otel/prw
+  buffer_size: 100
+  truncate_frequency: 1m
+resource_to_telemetry_conversion:
+  enabled: false

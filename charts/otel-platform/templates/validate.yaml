@@ -95,6 +95,9 @@
 
 {{- if gt (mul (int .Values.exporter_batch_max_kib) 1024) (mul (int .Values.otlp_max_recv_mib) 1048576) -}}{{- fail "exporter_batch_max_kib must fit within otlp_max_recv_mib" -}}{{- end -}}
 {{- if gt (mul (int .Values.exporter_batch_max_kib) 1024) (mul (int .Values.exporter_queue_mib) 1048576) -}}{{- fail "exporter_batch_max_kib must fit within exporter_queue_mib" -}}{{- end -}}
+{{- $logBytes := include "otel.logBytes" .Values.filelog_max_log_size | int64 -}}
+{{- if gt (add $logBytes 65536) (mul (int .Values.otlp_max_recv_mib) 1048576) -}}{{- fail "filelog_max_log_size must leave at least 64KiB within otlp_max_recv_mib for OTLP metadata" -}}{{- end -}}
+{{- if gt (add $logBytes 65536) (mul (int .Values.exporter_queue_mib) 1048576) -}}{{- fail "filelog_max_log_size plus 64KiB must fit within exporter_queue_mib" -}}{{- end -}}
 
 {{- range $key := list "server_name" "server_name_override" -}}
   {{- if hasKey $.Values.metrics_processing.kubeletstats $key -}}

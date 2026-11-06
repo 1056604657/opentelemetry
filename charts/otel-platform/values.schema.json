@@ -503,6 +503,14 @@
           "properties": {
             "enabled": {
               "type": "boolean"
+            },
+            "metric_names": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         },
@@ -512,6 +520,14 @@
           "properties": {
             "enabled": {
               "type": "boolean"
+            },
+            "metric_names": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         },
@@ -526,6 +542,14 @@
               "type": "string",
               "minLength": 3,
               "pattern": "^[^/\\s]+:[0-9]+$"
+            },
+            "metric_names": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         },
@@ -542,6 +566,21 @@
               "items": {
                 "type": "string",
                 "minLength": 1
+              }
+            },
+            "metrics": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "enabled"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
               }
             }
           }
@@ -596,7 +635,72 @@
           }
         }
       }
+    },
+    "collector_resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gateway": {
+          "$ref": "#/definitions/collectorResources"
+        },
+        "node": {
+          "$ref": "#/definitions/collectorResources"
+        },
+        "cluster": {
+          "$ref": "#/definitions/collectorResources"
+        },
+        "scraper": {
+          "$ref": "#/definitions/collectorResources"
+        },
+        "sampler": {
+          "$ref": "#/definitions/collectorResources"
+        }
+      }
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "definitions": {
+    "collectorResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": [
+                "string",
+                "number"
+              ]
+            },
+            "memory": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": [
+                "string",
+                "number"
+              ]
+            },
+            "memory": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
 }

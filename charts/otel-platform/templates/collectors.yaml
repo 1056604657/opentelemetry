@@ -1,10 +1,18 @@
 {{- $root := . -}}
+{{- $logBytes := include "otel.logBytes" .Values.filelog_max_log_size | int64 -}}
 {{- $kafkaTopic := default (printf "otel.%s.logs.v1" .Values.cluster_name) .Values.kafka_topic -}}
 {{- $kafkaGroup := default (printf "otel.%s.log-gateway.v1" .Values.cluster_name) .Values.kafka_group -}}
 {{- $operatorCA := include "otel.operatorCA" . -}}
-{{- $fileProtocol := ternary "prometheus_remote_write" "otlp_http" (eq .Values.metrics_protocol "prometheus_remote_write") -}}
-{{- $file := printf "files/collectors-%s.yaml" $fileProtocol -}}
-{{- $objects := .Files.Get $file | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray -}}
+{{- $objects := .Files.Get "files/collectors.yaml" | replace "RELEASE_NAMESPACE" .Release.Namespace | fromYamlArray -}}
+{{- if eq .Values.metrics_protocol "prometheus_remote_write" -}}
+  {{- range $o := $objects -}}
+    {{- if eq $o.metadata.name "otel-gateway" -}}
+      {{- $_ := set $o.spec.config.exporters "prometheus_remote_write" ($root.Files.Get "files/metrics-remote-write.yaml" | fromYaml) -}}
+      {{- $_ := unset $o.spec.config.exporters "otlp_http/metrics" -}}
+      {{- $_ := set $o.spec.config.service.pipelines.metrics "exporters" (list "prometheus_remote_write") -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
 {{- $gateway := dict -}}
 {{- range $o := $objects -}}{{- if eq $o.metadata.name "otel-gateway" -}}{{- $gateway = deepCopy $o -}}{{- end -}}{{- end -}}
 {{- $sampler := deepCopy $gateway -}}
@@ -32,6 +40,8 @@
       (deepCopy $root.Values.log_processing.filelog.source)
       (deepCopy $root.Values.log_processing.filelog.recombine)
       (deepCopy $root.Values.log_processing.filelog.cleanup)) -}}
+  {{- $_ := set (index $spec.config.receivers.filelog.operators 0) "max_log_size" $logBytes -}}
+  {{- $_ := set (index $spec.config.receivers.filelog.operators 2) "max_log_size" $logBytes -}}
   {{- $_ := set $spec.config.processors "k8s_attributes" (deepCopy $root.Values.log_processing.kubernetes) -}}
   {{- $_ := set $spec.config.processors "resource/node" (deepCopy $root.Values.log_processing.resource) -}}
   {{- $_ := set $spec.config.processors "transform/log_json" (deepCopy $root.Values.log_processing.normalize) -}}
@@ -147,9 +157,6 @@
 {{- if $schedule.hostAliases -}}{{- $_ := set $spec "hostAliases" $schedule.hostAliases -}}{{- end -}}
 {{- $_ := set $spec "priorityClassName" $schedule.priorityClassName -}}
 {{- $memory := int (index $root.Values.collector_memory_mib $role) -}}
-{{- $hard := div (mul $memory 80) 100 -}}
-{{- $spike := div (mul $hard 20) 100 -}}
-{{- $soft := sub $hard $spike -}}
 {{- $_ := set $spec "image" $root.Values.collector_image -}}
 {{- $_ := set $spec "imagePullSecrets" $root.Values.image_pull_secrets -}}
 {{- $annotations := $spec.podAnnotations | default dict -}}
@@ -163,13 +170,7 @@
 {{- $cpu := index $root.Values.collector_cpu $role -}}
 {{- $_ := set $spec.resources.requests "cpu" (toString $cpu.request) -}}
 {{- $_ := set $spec.resources.limits "cpu" (toString $cpu.limit) -}}
-{{- $_ := set $spec.config.processors.memory_limiter "limit_mib" $hard -}}
-{{- $_ := set $spec.config.processors.memory_limiter "spike_limit_mib" $spike -}}
-{{- range $env := $spec.env -}}
-  {{- if eq $env.name "GOMEMLIMIT" -}}
-    {{- $_ := set $env "value" (printf "%dMiB" $soft) -}}
-  {{- end -}}
-{{- end -}}
+{{- include "otel.resources" (dict "root" $root "spec" $spec "role" $role) -}}
 {{- range $ref := $spec.envFrom -}}
   {{- if eq $ref.secretRef.name "otel-backends" -}}{{- $_ := set $ref.secretRef "name" $root.Values.secret_names.backends -}}{{- end -}}
   {{- if eq $ref.secretRef.name "otel-kafka" -}}{{- $_ := set $ref.secretRef "name" $root.Values.secret_names.kafka -}}{{- end -}}
@@ -210,6 +211,8 @@
   {{- end -}}
   {{- if eq $id "kafka" -}}
     {{- $_ := set $receiver "brokers" $root.Values.kafka_brokers -}}
+    {{- $_ := set $receiver "max_fetch_size" (max (int $receiver.max_fetch_size) (add $logBytes 65536)) -}}
+    {{- $_ := set $receiver "max_partition_fetch_size" (max (int $receiver.max_partition_fetch_size) (add $logBytes 65536)) -}}
     {{- $_ := set $receiver.logs "topics" (list $kafkaTopic) -}}
     {{- $_ := set $receiver "group_id" $kafkaGroup -}}
     {{- $_ := unset $receiver "tls" -}}{{- $_ := unset $receiver "auth" -}}
@@ -228,10 +231,15 @@
       {{- /* Byte splitting can recreate empty metrics after the filter. */ -}}
       {{- $_ := unset $exporter.sending_queue "batch" -}}
     {{- else -}}
-      {{- $_ := set $exporter.sending_queue "batch" (dict "sizer" "bytes" "flush_timeout" "200ms" "min_size" 8192 "max_size" (mul (int $root.Values.exporter_batch_max_kib) 1024)) -}}
+      {{- $batchBytes := mul (int $root.Values.exporter_batch_max_kib) 1024 -}}
+      {{- if or (eq $id "otlp/logs") (eq $id "otlp_http/logs") (eq $id "kafka") -}}
+        {{- $batchBytes = max $batchBytes (add $logBytes 65536) -}}
+      {{- end -}}
+      {{- $_ := set $exporter.sending_queue "batch" (dict "sizer" "bytes" "flush_timeout" "200ms" "min_size" 8192 "max_size" $batchBytes) -}}
     {{- end -}}
   {{- end -}}
   {{- if eq $id "kafka" -}}
+    {{- $_ := set $exporter.producer "max_message_bytes" (max (int $exporter.producer.max_message_bytes) (add $logBytes 65536)) -}}
     {{- $_ := set $exporter "brokers" $root.Values.kafka_brokers -}}
     {{- $_ := set $exporter.logs "topic" $kafkaTopic -}}
     {{- $_ := unset $exporter "tls" -}}{{- $_ := unset $exporter "auth" -}}
