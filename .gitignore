@@ -9,3 +9,5 @@ __pycache__/
 .wbapp*
 site/
 new-dev集群验证/acceptance/results/
+tests/e2e/results/
+manifest.local.yaml

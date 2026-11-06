@@ -1,0 +1,51 @@
+job_name: service-annotations
+scrape_interval: 30s
+scrape_timeout: 10s
+honor_labels: false
+kubernetes_sd_configs:
+  - role: endpointslice
+relabel_configs:
+  - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+    regex: 'true'
+    action: keep
+  # Only real, ready Pod endpoints; exclude extra container-port targets inferred by SD.
+  - source_labels: [__meta_kubernetes_endpointslice_address_target_kind, __meta_kubernetes_endpointslice_endpoint_conditions_ready, __meta_kubernetes_pod_phase]
+    regex: 'Pod;true;Running'
+    action: keep
+  - source_labels: [__meta_kubernetes_endpointslice_port_protocol]
+    regex: TCP
+    action: keep
+  - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_port]
+    regex: '([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])'
+    action: keep
+  # The annotation is a Pod port; it need not be exposed by the Service.
+  # Preserve the endpoint host (including IPv6 brackets). TA 0.161.0 hashes the
+  # relabeled target without __meta_* labels, merging candidates from service ports.
+  - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+    regex: '(.+):[0-9]+;([0-9]+)'
+    # Collector syntax; Operator unescapes $$ before handing this job to TA.
+    replacement: '$$1:$$2'
+    target_label: __address__
+  - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+    regex: '(|https?)'
+    action: keep
+  - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+    regex: '(https?)'
+    target_label: __scheme__
+  - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+    regex: '(|/[^?#]*)'
+    action: keep
+  - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+    regex: '(/[^?#]*)'
+    target_label: __metrics_path__
+  - source_labels: [__meta_kubernetes_namespace]
+    target_label: k8s_namespace_name
+  - source_labels: [__meta_kubernetes_pod_name]
+    target_label: k8s_pod_name
+  - source_labels: [__meta_kubernetes_service_name]
+    target_label: k8s_service_name
+  - source_labels: [__meta_kubernetes_service_name]
+    target_label: service_name
+  - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+    regex: '(.+)'
+    target_label: service_name

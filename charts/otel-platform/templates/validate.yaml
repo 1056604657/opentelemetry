@@ -60,8 +60,10 @@
 {{- end -}}
 {{- if and .Values.diagnostics.cadvisor.enabled (not (hasPrefix "https://" .Values.kubelet_endpoint)) -}}{{- fail "cadvisor requires HTTPS kubelet_endpoint" -}}{{- end -}}
 {{- range $job := .Values.scrape_jobs -}}
+  {{- if and $.Values.service_annotation_discovery.enabled (eq $job.job_name "service-annotations") -}}{{- fail "scrape_jobs uses reserved job_name service-annotations" -}}{{- end -}}
   {{- if or (and $.Values.diagnostics.apiserver.enabled (eq $job.job_name "diagnostics-apiserver")) (and $.Values.diagnostics.kube_state_metrics.enabled (eq $job.job_name "diagnostics-kube-state-metrics")) -}}{{- fail "scrape_jobs uses reserved diagnostic job_name" -}}{{- end -}}
 {{- end -}}
+{{- if and .Values.service_annotation_discovery.enabled (empty .Values.service_annotation_discovery.namespaces) -}}{{- fail "service_annotation_discovery.namespaces must not be empty when enabled" -}}{{- end -}}
 {{- if and (not .Values.monitor_resources_enabled) .Values.businessPodMonitors -}}{{- fail "businessPodMonitors requires monitor_resources_enabled=true" -}}{{- end -}}
 {{- if .Values.aws_sigv4.enabled -}}
  {{- if ne .Values.metrics_protocol "prometheus_remote_write" -}}{{- fail "aws_sigv4 requires metrics_protocol=prometheus_remote_write" -}}{{- end -}}

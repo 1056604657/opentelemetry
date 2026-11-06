@@ -605,6 +605,11 @@ log_batch_size: 8192
 log_batch_timeout: 1s
 sampler_replicas: 3
 monitor_resources_enabled: true
+# 按 Service 的 prometheus.io/* annotations 发现各 Pod 的指标端点。
+# namespaces 必须显式填写；与 Monitor 对象的 namespace selector 独立。
+service_annotation_discovery:
+  enabled: false
+  namespaces: []
 scrape_jobs: []
 log_namespaces: []
 node_state_directory: /var/lib/otel-node

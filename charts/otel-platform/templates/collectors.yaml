@@ -292,6 +292,12 @@
     {{- $_ := set $spec.config.receivers.prometheus "config" (dict "scrape_configs" (concat $jobs $root.Values.scrape_jobs)) -}}
   {{- end -}}
   {{- $_ := set $spec.targetAllocator.prometheusCR "enabled" $root.Values.monitor_resources_enabled -}}
+  {{- if $root.Values.service_annotation_discovery.enabled -}}
+    {{- $job := $root.Files.Get "files/service-annotation-job.yaml" | fromYaml -}}
+    {{- $_ := set (index $job.kubernetes_sd_configs 0) "namespaces" (dict "names" $root.Values.service_annotation_discovery.namespaces) -}}
+    {{- $config := $spec.config.receivers.prometheus.config | default dict -}}
+    {{- $_ := set $spec.config.receivers.prometheus "config" (dict "scrape_configs" (append ($config.scrape_configs | default list) $job)) -}}
+  {{- end -}}
   {{- $_ := set $spec.targetAllocator "nodeSelector" $root.Values.scheduling.scraper.nodeSelector -}}
   {{- $_ := set $spec.targetAllocator "tolerations" $root.Values.scheduling.scraper.tolerations -}}
   {{- if $root.Values.target_allocator_mtls.enabled -}}
