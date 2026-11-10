@@ -36,6 +36,24 @@ persistent_queue: false
 storage_class: ''
 pvc_size: 10Gi
 
+# [按需] 后端只提供集群内 HTTP（无 TLS）时，显式打开对应信号，默认 false 要求 HTTPS。
+# 只对确实没有 TLS 的信号打开，不要全局关闭校验。
+# backend_http:
+#   traces:  {allow_http: true}
+#   logs:    {allow_http: true}
+#   metrics: {allow_http: true}
+
+# [按需] 镜像。默认全部来自 ghcr.io；国内或受限网络常拉不到，先按部署文档 1.1 节实测。
+# 拉不到时把固定版本同步到公司可信仓库，填完整地址（含 tag），注意核对 CPU 架构。
+# collector_image: registry.example.com/otel/collector-contrib:0.163.2
+# target_allocator_image: registry.example.com/otel/target-allocator:0.161.0
+# java_image: registry.example.com/otel/autoinstrumentation-java:2.32.0-1
+# python_image: registry.example.com/otel/autoinstrumentation-python:0.66b1-2
+# nodejs_image: registry.example.com/otel/autoinstrumentation-nodejs:0.78.0-6
+# 私仓拉取凭据，需预先在 observability namespace 建好。
+# image_pull_secrets:
+#   - name: registry-pull
+
 # [按需] 独立 requests/limits；未填写的字段继承 Chart 旧资源预算。
 # memory limit 同步更新 memory_limiter/GOMEMLIMIT；request 必须 <= limit。
 collector_resources: {}

@@ -2,6 +2,10 @@
 # OpenTelemetry Operator：只管理控制器、Webhook 和注入能力。
 # Collector 的 PVC 开关按需写入本集群 values，本文件无需配置存储。
 # 私有镜像等环境差异另用覆盖文件；不要修改官方 Operator 安装包。
+#
+# 只有当默认镜像拉不到时才需要动本文件（先按部署文档 1.1 节实测）：
+# 改下方 manager.image / collectorImage / targetAllocatorImage 的 repository
+# 为可信仓库地址，保留原 tag，并在文件末尾加顶层 imagePullSecrets。
 
 # 1. 控制器副本和维护保护
 replicaCount: 1
