@@ -43,10 +43,17 @@ pvc_size: 10Gi
 #   logs:    {allow_http: true}
 #   metrics: {allow_http: true}
 
-# [按需] 镜像。默认全部来自 ghcr.io；国内或受限网络常拉不到，先按部署文档 1.1 节实测。
-# 拉不到时把固定版本同步到公司可信仓库，填完整地址（含 tag），注意核对 CPU 架构。
+# [按需] 镜像。默认全部来自 ghcr.io；访问不了公网或要求走内部仓库时，
+# 把固定版本同步到自己的仓库后填完整地址（含 tag），核对 CPU 架构。
+# 每个字段独立生效：填哪个换哪个，没填的沿用 chart 默认值，不必全部填齐。
+#
+# 注意 collector_image / target_allocator_image 以这里为准：
+# 平台包会把它们显式写进 Collector CR 的 spec.image，
+# 覆盖 values-operator.yaml 里同名项的兜底默认值。
+# 换 Collector 或 TA 镜像改这里，改 values-operator.yaml 不生效。
 # collector_image: registry.example.com/otel/collector-contrib:0.163.2
 # target_allocator_image: registry.example.com/otel/target-allocator:0.161.0
+# 探针镜像只有这里能配，Operator 侧没有对应字段。
 # java_image: registry.example.com/otel/autoinstrumentation-java:2.32.0-1
 # python_image: registry.example.com/otel/autoinstrumentation-python:0.66b1-2
 # nodejs_image: registry.example.com/otel/autoinstrumentation-nodejs:0.78.0-6

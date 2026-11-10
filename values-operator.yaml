@@ -14,9 +14,15 @@ pdb:
 
 # 2. 固定镜像版本、资源和自监控
 manager:
+  # Operator 自身镜像。只有这里能配，平台配置里没有对应项。
   image:
     repository: ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator
     tag: 0.161.0
+  # 以下两项只是「Operator 创建 Collector CR 时的兜底默认」。
+  # 本项目平台包会把自己 values 里的 collector_image / target_allocator_image
+  # 显式写进每个 CR 的 spec.image，覆盖这里的值。
+  # → 换镜像请改 values-platform.yaml；只改这里不生效。
+  # 保留这两行是为了：平台包未显式指定时（如手工建 CR）仍有可用默认值。
   collectorImage:
     repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
     tag: 0.163.2
