@@ -670,10 +670,14 @@ aws_sigv4:
 # 6405 traces/s 健康（保留率与策略精确一致，sampler 内存 852Mi/4096Mi）。
 # decision_cache 同数量级；内存估算约 1.5KB x 5 spans x 待决数，200k 上限约需 1.5GiB/副本。
 # [高级] 尾采样已内置；按实际新 trace 速率、窗口和内存调整，集群 values 可覆盖。
-# 当前默认等待 30s；4000 x 30 / 3 x 1.5 = 60000，现有 200000 条/副本满足数量预算。
-# 上述历史吞吐验证使用 30s；当前配置的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
+# 当前默认等待 20s：业务最长请求约 10s，叠加 SDK 攒批（最多 5s）与导出余量，
+# 20s 能覆盖到实际最长 trace；再短会让长请求的尾部 span 赶不上决策。
+# 4000 x 20 / 3 x 1.5 = 40000，现有 200000 条/副本满足数量预算（约 5 倍余量）。
+# 上述历史吞吐验证使用 30s；30s 下 200000 条/副本可支撑 13333 traces/s，
+# 20s 下提升到 20000 traces/s。
+# 当前配置的 RSS 和实际峰值仍需验收，不承诺故障零丢失。
 tail_sampling:
-  decision_wait: 30s
+  decision_wait: 20s
   num_traces: 200000
   expected_new_traces_per_sec: 0
   maximum_trace_size_bytes: 5242880
