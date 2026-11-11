@@ -1,4 +1,30 @@
 # 通用生产集群配置：所有公司、云平台和后端都使用这一份，不需要选择其他模板。
+#
+# 用法：复制成本地文件后填写，文件名建议 values-<集群名>.local.yaml
+#   cp values-platform.yaml values-prod-01.local.yaml
+#
+# 本文件只列常用项，**不是全量字段清单**。需要更多参数时直接在副本里手写，
+# 字段名和默认值以 charts/otel-platform/values.yaml 为准（或查 values.schema.json）。
+#
+# 常见但本文件未列出的字段（默认值都是可用的，按需覆盖）：
+#   environment: production            # 环境标识，进 deployment.environment.name
+#   log_namespaces: [business-a]       # 只采这些命名空间的容器日志，空=全部
+#   otlp_namespace_selector: {}        # 只接受这些命名空间的 OTLP 数据，空=不过滤
+#   monitor_namespace_selector: {}     # 只发现这些命名空间里的 Monitor，空=不过滤
+#   node_state_directory: /var/lib/otel-node   # Node Agent 的 hostPath 目录
+#   backend_ca_file: ''                # 后端私有 CA 路径，配合 TLS 使用
+#   exporter_batch_max_kib: 512        # 出口批大小上限
+#   rollout_revision: ''               # 改了 Secret 内容后递增此值触发滚动
+#   scheduling:                        # 各角色的 nodeSelector/tolerations
+#     gateway: {nodeSelector: {kubernetes.io/os: linux}, tolerations: []}
+#   businessPodMonitors: []            # 额外业务 PodMonitor
+#   service_annotation_discovery:      # 按 Service annotation 抓指标
+#     enabled: false
+#     namespaces: []
+#
+# 采集范围收窄的三个开关要一致，否则会出现"日志采了但 OTLP 被拒"或反过来的情况：
+#   log_namespaces / otlp_namespace_selector / monitor_namespace_selector
+
 # [必填] 跨集群唯一的稳定名称。
 cluster_name: REPLACE_ME
 
